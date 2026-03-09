@@ -44,7 +44,7 @@ git add .
 git commit -m "Multi-addon repository structure"
 
 # Connect to your existing GitHub repository
-git remote add origin https://github.com/Rosfly/thread-coap-bridge-addon.git
+git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
 
 # Force push (replaces everything)
 git branch -M main
@@ -55,7 +55,7 @@ git push -f origin main
 
 ```bash
 # Clone your existing repo
-git clone https://github.com/Rosfly/thread-coap-bridge-addon.git
+git clone https://github.com/censay/thread-coap-bridge-addon.git
 cd thread-coap-bridge-addon
 
 # Delete everything
@@ -78,7 +78,7 @@ git push
 
 ## Verify on GitHub
 
-After pushing, go to https://github.com/Rosfly/thread-coap-bridge-addon
+After pushing, go to https://github.com/censay/thread-coap-bridge-addon
 
 You should see:
 ```
@@ -100,11 +100,11 @@ Click into `thread-coap-bridge/` and verify you see:
 
 1. **Remove old repository:**
    - Settings → Add-ons → Add-on Store → ⋮ → Repositories
-   - Remove `https://github.com/Rosfly/thread-coap-bridge-addon`
+   - Remove `https://github.com/censay/thread-coap-bridge-addon`
 
 2. **Add it back:**
    - Click ⋮ → Repositories
-   - Add: `https://github.com/Rosfly/thread-coap-bridge-addon`
+   - Add: `https://github.com/censay/thread-coap-bridge-addon`
    - Click **Add**
 
 3. **Verify:**
@@ -146,15 +146,15 @@ After pushing to GitHub:
 
 ```bash
 # Verify repository.yaml is accessible
-curl https://raw.githubusercontent.com/Rosfly/thread-coap-bridge-addon/main/repository.yaml
+curl https://raw.githubusercontent.com/censay/thread-coap-bridge-addon/main/repository.yaml
 
 # Should show:
 # name: Thread IoT Add-ons
-# url: https://github.com/Rosfly/thread-coap-bridge-addon
-# maintainer: Rosfly
+# url: https://github.com/censay/thread-coap-bridge-addon
+# maintainer: censay
 
 # Verify config.yaml is in subdirectory
-curl https://raw.githubusercontent.com/Rosfly/thread-coap-bridge-addon/main/thread-coap-bridge/config.yaml
+curl https://raw.githubusercontent.com/censay/thread-coap-bridge-addon/main/thread-coap-bridge/config.yaml
 
 # Should show the add-on config
 ```
@@ -174,7 +174,7 @@ Both should return content (not 404) if the structure is correct.
 4. Is the repository public?
 
 **View in browser:**
-- Go to https://github.com/Rosfly/thread-coap-bridge-addon
+- Go to https://github.com/censay/thread-coap-bridge-addon
 - You should see `repository.yaml` and `thread-coap-bridge/` folder immediately
 - Click into folder, see `config.yaml`
 
@@ -191,11 +191,11 @@ Check for specific errors:
 Once the add-on validates and installs:
 
 1. **Configure** the add-on (MQTT credentials, etc.)
-2. **Start** it (will run but won't do much yet)
-3. **Check logs** to see it's running
-4. **Implement** the Python code (CoAP/MQTT functionality)
+2. **Start** it and watch logs for discovery and reconcile events
+3. **Verify** that capability changes in `/.well-known/core` add or remove HA entities without manual DB cleanup
+4. **Test** the `/auth` flow through `auth_request` and `auth_tier`
 
-The skeleton is complete - now you just need to fill in the TODOs in the Python modules!
+The bridge implementation is live in this fork; the next step is deployment and validation, not filling in a skeleton.
 
 ---
 

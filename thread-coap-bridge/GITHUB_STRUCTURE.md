@@ -32,13 +32,13 @@ ha-addon-thread-coap-bridge/          ← GitHub repository root
    git add .
    git commit -m "Initial commit"
    git branch -M main
-   git remote add origin https://github.com/yourusername/ha-addon-thread-coap-bridge.git
+   git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
    git push -u origin main
    ```
 
 2. **Add to Home Assistant:**
    - Settings → Add-ons → Add-on Store → ⋮ → Repositories
-   - Add URL: `https://github.com/yourusername/ha-addon-thread-coap-bridge`
+   - Add URL: `https://github.com/censay/thread-coap-bridge-addon`
    - ✅ Home Assistant detects `config.yaml` and recognizes it as a single add-on
 
 **No `repository.yaml` needed!** The `config.yaml` file identifies it as an add-on.
@@ -65,8 +65,8 @@ ha-addons-collection/                  ← GitHub repository root
 
 ```yaml
 name: Thread IoT Add-ons
-url: https://github.com/yourusername/ha-addons-collection
-maintainer: Your Name <your.email@example.com>
+url: https://github.com/censay/thread-coap-bridge-addon
+maintainer: censay
 ```
 
 **Setup steps:**
@@ -79,8 +79,8 @@ maintainer: Your Name <your.email@example.com>
    # Create repository.yaml
    cat > repository.yaml << 'EOF'
    name: Thread IoT Add-ons
-   url: https://github.com/yourusername/ha-addons-collection
-   maintainer: Your Name <your.email@example.com>
+   url: https://github.com/censay/thread-coap-bridge-addon
+   maintainer: censay
    EOF
    
    # Move add-on into subdirectory
@@ -94,7 +94,7 @@ maintainer: Your Name <your.email@example.com>
    ```
 
 2. **Add to Home Assistant:**
-   - Add URL: `https://github.com/yourusername/ha-addons-collection`
+   - Add URL: `https://github.com/censay/thread-coap-bridge-addon`
    - ✅ Home Assistant reads `repository.yaml` and discovers all add-ons in subdirectories
 
 ---
@@ -126,7 +126,7 @@ cd thread-coap-bridge-addon
 git init
 git add .
 git commit -m "Initial commit"
-git remote add origin https://github.com/yourusername/ha-addon-thread-coap-bridge.git
+git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
 git push -u origin main
 ```
 
@@ -142,14 +142,14 @@ unzip ../thread-coap-bridge-addon.zip
 # Create repository.yaml (use the file I created)
 cat > repository.yaml << 'EOF'
 name: Thread IoT Add-ons
-url: https://github.com/yourusername/ha-addons-collection
-maintainer: Your Name <your.email@example.com>
+url: https://github.com/censay/thread-coap-bridge-addon
+maintainer: censay
 EOF
 
 git init
 git add .
 git commit -m "Initial commit"
-git remote add origin https://github.com/yourusername/ha-addons-collection.git
+git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
 git push -u origin main
 ```
 

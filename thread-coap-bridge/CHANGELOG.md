@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-09
+
+### Added
+- Capability reconciliation driven by successful `/.well-known/core` responses
+- Resource-handler registry for explicit entity and monitor mapping
+- First-class `/auth` bridge support with `auth_request` and `auth_tier` entities
+- Bridge-side ECDSA P-256 signature verification for `/auth`
+- Regression tests for discovery parsing, registry reconciliation, handler mapping, and auth verification
+
+### Changed
+- Re-discovered offline devices now requeue runtime reconciliation even when their capability set is unchanged
+- MQTT discovery is republished from reconciled entity state instead of sticky cached assumptions
+- Repository and add-on metadata now point to the maintained `censay` fork
+- Add-on version updated to `0.6.0`
+
+### Fixed
+- Removed the need to manually clear `devices.db` or retained MQTT discovery when resources are added or removed during development
+- Fixed per-resource `obs` parsing in `/.well-known/core` payloads
+- Finished monitor tasks now schedule runtime reconcile so observers and pollers are restarted cleanly
+
 ## [0.5.0] - 2025-01-25
 
 ### Investigated

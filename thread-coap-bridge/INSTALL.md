@@ -29,7 +29,7 @@
    ```bash
    # Extract the downloaded zip file to this directory
    # Or use git if available:
-   # git clone https://github.com/yourusername/ha-addon-thread-coap-bridge.git .
+   # git clone https://github.com/censay/thread-coap-bridge-addon.git .
    ```
 
 4. **Tell Home Assistant about local add-ons:**
@@ -56,7 +56,7 @@
    git add .
    git commit -m "Initial commit"
    git branch -M main
-   git remote add origin https://github.com/yourusername/ha-addon-thread-coap-bridge.git
+   git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
    git push -u origin main
    ```
 
@@ -64,7 +64,7 @@
    - Open Home Assistant
    - Go to **Settings** → **Add-ons** → **Add-on Store**
    - Click menu (⋮) → **Repositories**
-   - Add: `https://github.com/yourusername/ha-addon-thread-coap-bridge`
+   - Add: `https://github.com/censay/thread-coap-bridge-addon`
    - Click **Add**
 
 3. **Install the add-on:**
@@ -73,6 +73,8 @@
    - Click **Install**
 
 ### Configuration
+
+Version `0.6.0` adds automatic capability reconciliation plus `/auth` bridge entities, so add/remove cycles during firmware development no longer require manual SQLite or retained MQTT cleanup.
 
 1. **Click on the Thread CoAP Bridge add-on**
 
@@ -237,6 +239,6 @@ After successful installation:
 
 ## Getting Help
 
-- **GitHub Issues:** https://github.com/yourusername/ha-addon-thread-coap-bridge/issues
+- **GitHub Issues:** https://github.com/censay/thread-coap-bridge-addon/issues
 - **Home Assistant Community:** https://community.home-assistant.io/
 - **Documentation:** See DOCS.md and README.md

@@ -7,9 +7,17 @@ Automatically discover and integrate CoAP-enabled Thread devices into Home Assis
 This add-on bridges CoAP devices on your Thread network to Home Assistant using MQTT Discovery. It:
 
 - Automatically discovers Thread devices via CoAP multicast
+- Reconciles capability changes from `/.well-known/core` automatically
 - Monitors device state in real-time using CoAP Observe
 - Creates Home Assistant entities automatically (lights, sensors, switches)
 - Handles bidirectional control (HA → Device and Device → HA)
+
+## What's New in 0.6.0
+
+- The maintained repository URL is `https://github.com/censay/thread-coap-bridge-addon`
+- Device capabilities are reconciled automatically when resources are added or removed during firmware development
+- `/auth` is exposed as a bridge-managed `auth_tier` sensor plus an `auth_request` button
+- Removed resources now clean up retained Home Assistant discovery automatically
 
 ## Prerequisites
 
@@ -23,7 +31,7 @@ Before installing this add-on, you need:
 
 1. Navigate to **Settings** → **Add-ons** → **Add-on Store**
 2. Click the menu (⋮) → **Repositories**
-3. Add this repository URL: `https://github.com/yourusername/ha-addon-thread-coap-bridge`
+3. Add this repository URL: `https://github.com/censay/thread-coap-bridge-addon`
 4. Find "Thread CoAP Bridge" in the list
 5. Click **Install**
 
@@ -93,6 +101,11 @@ The bridge automatically maps CoAP resources to Home Assistant entities:
 | `battery` | Sensor | Battery percentage monitoring |
 | `temperature` | Sensor | Temperature readings |
 | `humidity` | Sensor | Humidity readings |
+
+The `auth` resource is exposed as:
+
+- `auth_tier` sensor
+- `auth_request` button
 
 ## Troubleshooting
 
@@ -192,8 +205,8 @@ For enhanced security:
 ## Support & Issues
 
 - **Documentation**: See README.md in repository
-- **Issues**: https://github.com/yourusername/ha-addon-thread-coap-bridge/issues
-- **Discussions**: https://github.com/yourusername/ha-addon-thread-coap-bridge/discussions
+- **Issues**: https://github.com/censay/thread-coap-bridge-addon/issues
+- **Discussions**: https://github.com/censay/thread-coap-bridge-addon/discussions
 
 ## License
 

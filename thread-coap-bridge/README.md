@@ -8,11 +8,22 @@ A Home Assistant add-on that bridges CoAP-enabled devices on Thread networks to 
 - Real-time state updates using CoAP polling
 - MQTT Discovery integration (devices appear automatically in HA)
 - Support for lights, switches, sensors, and battery monitoring
+- Automatic capability reconciliation when resources are added or removed
+- First-class `/auth` support with `auth_request` and `auth_tier` entities
 - Multi-architecture support (amd64, aarch64, armv7)
 - **Robust offline detection** with configurable thresholds
 - **Automatic device cleanup** for long-offline devices
 - **Automatic re-discovery** when devices return online
 - **SED (Sleepy End Device) support** with 65-second timeouts
+
+## Recent Changes (v0.6.0)
+
+### Capability Reconciliation and `/auth`
+
+- Successful `/.well-known/core` responses now drive capability reconciliation instead of sticky one-time discovery
+- Added a resource-handler layer so known resource types and future developer-added resource types are handled explicitly
+- Added bridge-side `/auth` support with an `auth_request` button, an `auth_tier` sensor, and ECDSA P-256 signature verification
+- Repository metadata and install instructions now target the maintained `censay` fork: `https://github.com/censay/thread-coap-bridge-addon`
 
 ## Recent Changes (v0.5.0)
 
@@ -330,8 +341,8 @@ Handle multiple response formats for robustness:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ha-addon-thread-coap-bridge.git
-cd ha-addon-thread-coap-bridge
+git clone https://github.com/censay/thread-coap-bridge-addon.git
+cd thread-coap-bridge-addon
 
 # Build locally
 docker build -t thread-coap-bridge .
@@ -390,7 +401,7 @@ python3 main.py
 
 1. Push code to GitHub
 2. In HA: Settings → Add-ons → Add-on Store → ⋮ → Repositories  
-3. Add: `https://github.com/yourusername/ha-addon-thread-coap-bridge`
+3. Add: `https://github.com/censay/thread-coap-bridge-addon`
 4. Install from repository
 
 ## Architecture
@@ -430,7 +441,7 @@ rootfs/app/
 ├── coap_client.py       # CoAP GET/PUT/Observe operations, failure tracking
 ├── mqtt_publisher.py    # MQTT Discovery, state publishing
 ├── device_registry.py   # SQLite database for device management
-└── models.py            # Data models (Device, Resource)
+└── resource_handlers.py # Resource-to-entity mapping and monitor behavior
 ```
 
 ## Contributing

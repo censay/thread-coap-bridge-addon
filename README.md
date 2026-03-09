@@ -10,14 +10,24 @@ Bridge CoAP devices on Thread networks to Home Assistant via MQTT Discovery.
 
 **Features:**
 - Automatic device discovery via CoAP multicast + unicast re-discovery
+- Automatic capability reconciliation when resources are added or removed
 - Real-time state updates via CoAP Observe (LED/buttons) and polling (sensors)
 - MQTT Discovery integration (devices appear automatically in HA)
 - Support for lights, switches, sensors, and battery monitoring
+- First-class `/auth` support with `auth_request` and `auth_tier` entities
 - Per-sensor availability tracking for accurate status in Home Assistant
 - Robust offline/online handling with automatic re-discovery
 - Optimized for Sleepy End Devices (SED) with staggered polling
 
 **Documentation:** See [thread-coap-bridge/DOCS.md](thread-coap-bridge/DOCS.md)
+
+## Maintained Fork
+
+This repository is maintained as the `censay` fork.
+
+- Repository: `https://github.com/censay/thread-coap-bridge-addon`
+- Current add-on version: `0.6.0`
+- Headline changes: capability reconciliation for developer-added resources, stale entity removal, and bridge-side `/auth` support
 
 ---
 
@@ -72,14 +82,14 @@ homeassistant/{component}/{device_id}/{sensor}/config  # HA Discovery
 
 1. In Home Assistant, go to **Settings** → **Add-ons** → **Add-on Store**
 2. Click the menu (⋮) in the top right → **Repositories**
-3. Add this repository URL: `https://github.com/Rosfly/thread-coap-bridge-addon`
+3. Add this repository URL: `https://github.com/censay/thread-coap-bridge-addon`
 4. Click **Add**
 5. The add-on will appear in your add-on store
 
 ## Support
 
-- **Issues:** https://github.com/Rosfly/thread-coap-bridge-addon/issues
-- **Discussions:** https://github.com/Rosfly/thread-coap-bridge-addon/discussions
+- **Issues:** https://github.com/censay/thread-coap-bridge-addon/issues
+- **Discussions:** https://github.com/censay/thread-coap-bridge-addon/discussions
 
 ## Repository Structure
 
