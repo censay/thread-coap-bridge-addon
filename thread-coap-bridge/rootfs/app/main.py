@@ -181,6 +181,8 @@ class CoAPBridgeService:
         while self.running:
             try:
                 results = []
+                self.discovery.start_cycle()
+                results.extend(await self.discovery.discover_seed_devices())
                 results.extend(await self.discovery.discover_devices())
                 results.extend(await self.discovery.rediscover_offline_devices(self.registry))
                 if results:

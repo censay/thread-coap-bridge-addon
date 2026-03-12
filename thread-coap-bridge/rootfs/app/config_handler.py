@@ -60,8 +60,35 @@ class ConfigHandler:
         config.setdefault('mqtt_port', 1883)
         config.setdefault('mqtt_user', '')
         config.setdefault('mqtt_password', '')
+        config['seed_ipv6_addresses'] = self._normalize_seed_ipv6_addresses(
+            config.get('seed_ipv6_addresses', [])
+        )
 
         return config
+
+    def _normalize_seed_ipv6_addresses(self, values):
+        if values is None:
+            return []
+
+        if isinstance(values, str):
+            values = [values]
+
+        if not isinstance(values, (list, tuple)):
+            logger.warning("Ignoring non-list seed_ipv6_addresses value: %r", values)
+            return []
+
+        seeds = []
+        for value in values:
+            if value is None:
+                continue
+
+            seed = str(value).strip()
+            if not seed:
+                continue
+
+            seeds.append(seed)
+
+        return seeds
     
     def _setup_logging(self):
         """Configure logging based on user settings."""
@@ -105,5 +132,6 @@ class ConfigHandler:
         return {
             'discovery_interval': self.config['discovery_interval'],
             'multicast_address': self.config['multicast_address'],
-            'thread_interface': self.config.get('thread_interface', 'wpan0')
+            'thread_interface': self.config.get('thread_interface', 'wpan0'),
+            'seed_ipv6_addresses': self.config.get('seed_ipv6_addresses', []),
         }

@@ -1,5 +1,5 @@
 name: "Thread CoAP Bridge"
-version: "0.6.0"
+version: "0.6.1"
 slug: "thread_coap_bridge"
 description: "Bridge Thread CoAP devices to Home Assistant with MQTT capability sync and auth support"
 url: "https://github.com/censay/thread-coap-bridge-addon"
@@ -27,6 +27,7 @@ options:
   log_level: "info"
   thread_interface: "wpan0"
   multicast_address: "ff03::fd"
+  seed_ipv6_addresses: []
   debug_shell: false
   offline_threshold_polls: 5
   cleanup_after_hours: 24
@@ -41,6 +42,8 @@ schema:
   log_level: list(debug|info|warning|error)
   thread_interface: str
   multicast_address: str
+  seed_ipv6_addresses:
+    - str
   debug_shell: bool
   offline_threshold_polls: int(3,20)
   cleanup_after_hours: int(1,168)

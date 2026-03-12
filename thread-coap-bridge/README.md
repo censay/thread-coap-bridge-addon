@@ -10,11 +10,20 @@ A Home Assistant add-on that bridges CoAP-enabled devices on Thread networks to 
 - Support for lights, switches, sensors, and battery monitoring
 - Automatic capability reconciliation when resources are added or removed
 - First-class `/auth` support with `auth_request` and `auth_tier` entities
+- Seed-based unicast bootstrap for first contact when multicast discovery on `wpan0` is unreliable
 - Multi-architecture support (amd64, aarch64, armv7)
 - **Robust offline detection** with configurable thresholds
 - **Automatic device cleanup** for long-offline devices
 - **Automatic re-discovery** when devices return online
 - **SED (Sleepy End Device) support** with 65-second timeouts
+
+## Recent Changes (v0.6.1)
+
+### Seed Bootstrap and Endpoint Correctness
+
+- Added `seed_ipv6_addresses` so an empty bridge registry can bootstrap known devices via unicast before multicast
+- Discovery cycles now probe configured seed addresses before multicast and offline re-discovery
+- Bridge MQTT output is the intended backend-facing contract for availability, uptime, and verified `auth_tier`
 
 ## Recent Changes (v0.6.0)
 
@@ -24,6 +33,19 @@ A Home Assistant add-on that bridges CoAP-enabled devices on Thread networks to 
 - Added a resource-handler layer so known resource types and future developer-added resource types are handled explicitly
 - Added bridge-side `/auth` support with an `auth_request` button, an `auth_tier` sensor, and ECDSA P-256 signature verification
 - Repository metadata and install instructions now target the maintained `censay` fork: `https://github.com/censay/thread-coap-bridge-addon`
+
+## Seed Bootstrap and MQTT Contract
+
+When `aiocoap` cannot discover new devices via multicast on `wpan0`, configure `seed_ipv6_addresses` in the add-on options with one or more known device Thread IPv6 addresses. Each discovery cycle will probe those addresses with unicast `GET /.well-known/core` before attempting multicast. A successful reply enters the normal registry and MQTT discovery flow; no manual `devices.db` edits are required.
+
+For backend integration on your LAN, consume bridge-published MQTT topics instead of talking directly to Thread IPv6:
+
+- `thread/{device_id}/availability`
+- `thread/{device_id}/{resource}/state`
+- `thread/{device_id}/{resource}/availability`
+- `thread/{device_id}/auth_tier/state`
+
+Home Assistant discovery topics under `homeassistant/...` remain for HA only. Backend services should treat the retained `thread/...` topics as the stable integration surface.
 
 ## Recent Changes (v0.5.0)
 

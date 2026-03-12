@@ -48,6 +48,8 @@ discovery_interval: 60
 log_level: info
 thread_interface: wpan0
 multicast_address: ff03::fd
+seed_ipv6_addresses:
+  - "fd00::1234"
 ```
 
 ### Configuration Options
@@ -62,14 +64,16 @@ multicast_address: ff03::fd
 | `log_level` | Logging verbosity: debug, info, warning, error | `info` |
 | `thread_interface` | Thread network interface name | `wpan0` |
 | `multicast_address` | CoAP multicast address for discovery | `ff03::fd` |
+| `seed_ipv6_addresses` | Optional known device IPv6 addresses for unicast bootstrap | `[]` |
 
 ## How It Works
 
-1. **Discovery**: Periodically multicasts CoAP requests to find devices
-2. **Resource Query**: Queries each device's `/.well-known/core` endpoint
-3. **MQTT Publishing**: Creates Home Assistant entities via MQTT Discovery
-4. **Observation**: Subscribes to device updates using CoAP Observe
-5. **Control**: Translates HA commands to CoAP PUT requests
+1. **Seed Bootstrap**: Optionally probes configured IPv6 seed addresses via unicast
+2. **Discovery**: Periodically multicasts CoAP requests to find devices
+3. **Resource Query**: Queries each device's `/.well-known/core` endpoint
+4. **MQTT Publishing**: Creates Home Assistant entities via MQTT Discovery
+5. **Observation**: Subscribes to device updates using CoAP Observe
+6. **Control**: Translates HA commands to CoAP PUT requests
 
 ## Device Requirements
 
@@ -107,6 +111,17 @@ The `auth` resource is exposed as:
 - `auth_tier` sensor
 - `auth_request` button
 
+## MQTT Contract for Other Backends
+
+Use the bridge-published `thread/...` topics as the stable backend-facing interface:
+
+- `thread/{device_id}/availability`
+- `thread/{device_id}/{resource}/state`
+- `thread/{device_id}/{resource}/availability`
+- `thread/{device_id}/auth_tier/state`
+
+Home Assistant discovery topics under `homeassistant/...` are for HA entity registration only.
+
 ## Troubleshooting
 
 ### Devices Not Discovered
@@ -125,6 +140,12 @@ ot-ctl ipaddr
 **Test manual CoAP request:**
 ```bash
 aiocoap-client -m GET coap://[device-ipv6]/.well-known/core
+```
+
+**Bootstrap a known device when multicast discovery fails:**
+```yaml
+seed_ipv6_addresses:
+  - "fd00::1234"
 ```
 
 **Check add-on logs:**

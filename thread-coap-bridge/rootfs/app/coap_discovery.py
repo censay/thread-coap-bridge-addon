@@ -1,11 +1,12 @@
 """
 CoAP Discovery Module
 
-Handles multicast discovery of CoAP devices on Thread network
+Handles seed-based unicast bootstrap, multicast discovery,
 and parsing of /.well-known/core responses.
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
 from aiocoap import Context, Message, GET, NON
@@ -24,10 +25,18 @@ class CoAPDiscovery:
         self.registry = device_registry
         self.multicast_address = config.get('multicast_address', 'ff03::fd')
         self.thread_interface = config.get('thread_interface', 'wpan0')
+        self.seed_addresses = self._normalize_seed_addresses(
+            config.get('seed_ipv6_addresses', [])
+        )
         self.context = None
         self.cycle_addresses = set()
 
         logger.info(f"CoAP Discovery initialized (trying groups: {', '.join(self.MULTICAST_GROUPS)})")
+        if self.seed_addresses:
+            logger.info(
+                "Configured %d seed IPv6 address(es) for unicast bootstrap",
+                len(self.seed_addresses),
+            )
 
     async def initialize(self):
         try:
@@ -37,13 +46,38 @@ class CoAPDiscovery:
             logger.error(f"Failed to initialize CoAP context: {e}")
             raise
 
+    def start_cycle(self):
+        self.cycle_addresses = set()
+
+    async def discover_seed_devices(self):
+        if not self.context:
+            logger.error("CoAP context not initialized")
+            return []
+
+        results = []
+
+        for ipv6_addr in self.seed_addresses:
+            if ipv6_addr in self.cycle_addresses:
+                continue
+
+            logger.info("Probing seed device via unicast: %s", ipv6_addr)
+            resources = await self.query_device_resources(ipv6_addr)
+            if not resources:
+                logger.debug("Seed device did not respond: %s", ipv6_addr)
+                continue
+
+            self.cycle_addresses.add(ipv6_addr)
+            logger.info("Seed device responded: %s", ipv6_addr)
+            results.append(await self.registry.register_device(ipv6_addr, resources=resources))
+
+        return results
+
     async def discover_devices(self):
         """Perform one multicast discovery cycle and reconcile all replies."""
         if not self.context:
             logger.error("CoAP context not initialized")
             return []
 
-        self.cycle_addresses = set()
         results = []
 
         for mcast_addr in self.MULTICAST_GROUPS:
@@ -198,3 +232,38 @@ class CoAPDiscovery:
         if self.context:
             await self.context.shutdown()
             logger.info("CoAP discovery context shut down")
+
+    def _normalize_seed_addresses(self, values):
+        if values is None:
+            return []
+
+        if isinstance(values, str):
+            values = [values]
+
+        normalized = []
+        seen = set()
+
+        for value in values:
+            if value is None:
+                continue
+
+            candidate = str(value).strip()
+            if not candidate:
+                continue
+
+            candidate = candidate.strip('[]')
+            candidate = candidate.split('%')[0]
+
+            try:
+                ipaddress.IPv6Address(candidate)
+            except ValueError:
+                logger.warning("Ignoring invalid seed IPv6 address: %s", value)
+                continue
+
+            if candidate in seen:
+                continue
+
+            seen.add(candidate)
+            normalized.append(candidate)
+
+        return normalized
