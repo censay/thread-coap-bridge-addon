@@ -209,6 +209,16 @@ def test_otbr_device_payload_extracts_omr_candidates_and_eui64():
     ]
 
 
+def test_otbr_rest_url_builder_prefers_local_host_network_endpoints():
+    discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://127.0.0.1:8081/api"})
+
+    assert discovery.otbr_rest_urls == [
+        "http://127.0.0.1:8081/api",
+        "http://localhost:8081/api",
+        "http://core-openthread-border-router:8081/api",
+    ]
+
+
 def test_otbr_candidates_are_probed_before_interface_and_multicast():
     class FakeRegistry:
         def __init__(self):
@@ -222,12 +232,14 @@ def test_otbr_candidates_are_probed_before_interface_and_multicast():
         registry = FakeRegistry()
         discovery = CoAPDiscovery(
             registry,
-            {"otbr_rest_url": "http://core-openthread-border-router:8081/api"},
+            {"otbr_rest_url": "http://127.0.0.1:8081/api"},
         )
         discovery.context = object()
         discovery.start_cycle()
 
-        async def fake_fetch_otbr_devices():
+        async def fake_fetch_otbr_devices(base_url):
+            if base_url != "http://127.0.0.1:8081/api":
+                return None
             return [
                 {
                     "id": "de62e016db392476",

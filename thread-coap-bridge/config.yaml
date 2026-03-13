@@ -1,5 +1,5 @@
 name: "Thread CoAP Bridge"
-version: "0.6.2"
+version: "0.6.3"
 slug: "thread_coap_bridge"
 description: "Bridge Thread CoAP devices to Home Assistant with MQTT capability sync and auth support"
 url: "https://github.com/censay/thread-coap-bridge-addon"
@@ -27,7 +27,7 @@ options:
   log_level: "info"
   thread_interface: "wpan0"
   multicast_address: "ff03::fd"
-  otbr_rest_url: "http://core-openthread-border-router:8081/api"
+  otbr_rest_url: "http://127.0.0.1:8081/api"
   seed_ipv6_addresses: []
   debug_shell: false
   offline_threshold_polls: 5

@@ -33,7 +33,7 @@ class CoAPDiscovery:
         self.registry = device_registry
         self.multicast_address = config.get('multicast_address', 'ff03::fd')
         self.thread_interface = config.get('thread_interface', 'wpan0')
-        self.otbr_rest_url = self._normalize_otbr_rest_url(config.get('otbr_rest_url'))
+        self.otbr_rest_urls = self._build_otbr_rest_urls(config.get('otbr_rest_url'))
         self.seed_addresses = self._normalize_seed_addresses(
             config.get('seed_ipv6_addresses', [])
         )
@@ -41,8 +41,11 @@ class CoAPDiscovery:
         self.cycle_addresses = set()
 
         logger.info(f"CoAP Discovery initialized (trying groups: {', '.join(self.MULTICAST_GROUPS)})")
-        if self.otbr_rest_url:
-            logger.info("OTBR REST discovery enabled via %s", self.otbr_rest_url)
+        if self.otbr_rest_urls:
+            logger.info(
+                "OTBR REST discovery enabled via %s",
+                ", ".join(self.otbr_rest_urls),
+            )
         if self.seed_addresses:
             logger.info(
                 "Configured %d seed IPv6 address(es) for unicast bootstrap",
@@ -136,13 +139,32 @@ class CoAPDiscovery:
             logger.error("CoAP context not initialized")
             return []
 
-        if not self.otbr_rest_url:
+        if not self.otbr_rest_urls:
             return []
 
-        devices = await self._fetch_otbr_devices()
-        candidates = self._extract_otbr_candidates(devices)
+        candidates = []
+        reachable_urls = []
+
+        for base_url in self.otbr_rest_urls:
+            devices = await self._fetch_otbr_devices(base_url)
+            if devices is None:
+                continue
+
+            reachable_urls.append(base_url)
+            candidates.extend(self._extract_otbr_candidates(devices))
+
+        if not reachable_urls:
+            logger.warning(
+                "OTBR REST not reachable via %s",
+                ", ".join(self.otbr_rest_urls),
+            )
+            return []
+
         if not candidates:
-            logger.info("No OTBR REST device candidates available")
+            logger.info(
+                "No OTBR REST device candidates available from %s",
+                ", ".join(reachable_urls),
+            )
             return []
 
         logger.info("OTBR REST returned %d candidate(s)", len(candidates))
@@ -330,18 +352,18 @@ class CoAPDiscovery:
             await self.context.shutdown()
             logger.info("CoAP discovery context shut down")
 
-    async def _fetch_otbr_devices(self):
-        action_id = await self._trigger_otbr_device_refresh()
+    async def _fetch_otbr_devices(self, base_url):
+        action_id = await self._trigger_otbr_device_refresh(base_url)
         if action_id:
-            await self._wait_for_otbr_action(action_id)
+            await self._wait_for_otbr_action(base_url, action_id)
 
         response = await self._otbr_request_json(
             'GET',
-            f'{self.otbr_rest_url}/devices',
+            f'{base_url}/devices',
             headers={'Accept': 'application/vnd.api+json'},
         )
         if not response:
-            return []
+            return None
 
         data = response.get('data')
         if isinstance(data, list):
@@ -352,7 +374,7 @@ class CoAPDiscovery:
 
         return []
 
-    async def _trigger_otbr_device_refresh(self):
+    async def _trigger_otbr_device_refresh(self, base_url):
         payload = {
             'data': [
                 {
@@ -369,7 +391,7 @@ class CoAPDiscovery:
 
         response = await self._otbr_request_json(
             'POST',
-            f'{self.otbr_rest_url}/actions',
+            f'{base_url}/actions',
             headers={
                 'Accept': 'application/vnd.api+json',
                 'Content-Type': 'application/vnd.api+json',
@@ -393,13 +415,13 @@ class CoAPDiscovery:
             logger.debug("Started OTBR device refresh action %s", action_id)
         return action_id
 
-    async def _wait_for_otbr_action(self, action_id):
+    async def _wait_for_otbr_action(self, base_url, action_id):
         deadline = asyncio.get_running_loop().time() + self.OTBR_ACTION_MAX_WAIT
 
         while asyncio.get_running_loop().time() < deadline:
             response = await self._otbr_request_json(
                 'GET',
-                f'{self.otbr_rest_url}/actions/{action_id}',
+                f'{base_url}/actions/{action_id}',
                 headers={'Accept': 'application/vnd.api+json'},
             )
             if not response:
@@ -656,6 +678,27 @@ class CoAPDiscovery:
             return None
 
         return addr.compressed
+
+    def _build_otbr_rest_urls(self, value):
+        defaults = [
+            value,
+            'http://127.0.0.1:8081/api',
+            'http://localhost:8081/api',
+            'http://core-openthread-border-router:8081/api',
+        ]
+
+        urls = []
+        seen = set()
+
+        for candidate in defaults:
+            normalized = self._normalize_otbr_rest_url(candidate)
+            if not normalized or normalized in seen:
+                continue
+
+            seen.add(normalized)
+            urls.append(normalized)
+
+        return urls
 
     def _normalize_otbr_rest_url(self, value):
         if value is None:
