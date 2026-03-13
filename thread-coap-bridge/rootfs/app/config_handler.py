@@ -30,7 +30,8 @@ class ConfigHandler:
                 'discovery_interval': 60,
                 'log_level': 'info',
                 'thread_interface': 'wpan0',
-                'multicast_address': 'ff03::fd'
+                'multicast_address': 'ff03::fd',
+                'otbr_rest_url': 'http://core-openthread-border-router:8081/api',
             }
 
         # MQTT credentials come from environment variables (set by service script from Supervisor)
@@ -60,6 +61,7 @@ class ConfigHandler:
         config.setdefault('mqtt_port', 1883)
         config.setdefault('mqtt_user', '')
         config.setdefault('mqtt_password', '')
+        config.setdefault('otbr_rest_url', 'http://core-openthread-border-router:8081/api')
         config['seed_ipv6_addresses'] = self._normalize_seed_ipv6_addresses(
             config.get('seed_ipv6_addresses', [])
         )
@@ -133,5 +135,6 @@ class ConfigHandler:
             'discovery_interval': self.config['discovery_interval'],
             'multicast_address': self.config['multicast_address'],
             'thread_interface': self.config.get('thread_interface', 'wpan0'),
+            'otbr_rest_url': self.config.get('otbr_rest_url'),
             'seed_ipv6_addresses': self.config.get('seed_ipv6_addresses', []),
         }

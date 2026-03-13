@@ -7,9 +7,12 @@ and parsing of /.well-known/core responses.
 
 import asyncio
 import ipaddress
+import json
 import logging
 import re
 from asyncio.subprocess import PIPE
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from aiocoap import Context, Message, GET, NON
 
 logger = logging.getLogger(__name__)
@@ -21,12 +24,16 @@ class CoAPDiscovery:
     WELL_KNOWN_CORE = "/.well-known/core"
     DISCOVERY_TIMEOUT = 5.0
     COMMAND_TIMEOUT = 3.0
+    OTBR_HTTP_TIMEOUT = 5.0
+    OTBR_ACTION_POLL_INTERVAL = 1.0
+    OTBR_ACTION_MAX_WAIT = 20.0
     MULTICAST_GROUPS = ['ff03::fd', 'ff03::1']
 
     def __init__(self, device_registry, config):
         self.registry = device_registry
         self.multicast_address = config.get('multicast_address', 'ff03::fd')
         self.thread_interface = config.get('thread_interface', 'wpan0')
+        self.otbr_rest_url = self._normalize_otbr_rest_url(config.get('otbr_rest_url'))
         self.seed_addresses = self._normalize_seed_addresses(
             config.get('seed_ipv6_addresses', [])
         )
@@ -34,6 +41,8 @@ class CoAPDiscovery:
         self.cycle_addresses = set()
 
         logger.info(f"CoAP Discovery initialized (trying groups: {', '.join(self.MULTICAST_GROUPS)})")
+        if self.otbr_rest_url:
+            logger.info("OTBR REST discovery enabled via %s", self.otbr_rest_url)
         if self.seed_addresses:
             logger.info(
                 "Configured %d seed IPv6 address(es) for unicast bootstrap",
@@ -81,6 +90,7 @@ class CoAPDiscovery:
             return []
 
         results = []
+        results.extend(await self.discover_otbr_devices())
         results.extend(await self.discover_interface_devices())
 
         for mcast_addr in self.MULTICAST_GROUPS:
@@ -117,6 +127,51 @@ class CoAPDiscovery:
 
         if not self.cycle_addresses:
             logger.warning("No devices discovered via multicast - devices may not be responding to multicast")
+
+        return results
+
+    async def discover_otbr_devices(self):
+        """Use OTBR REST inventory as the primary source of attached Thread devices."""
+        if not self.context:
+            logger.error("CoAP context not initialized")
+            return []
+
+        if not self.otbr_rest_url:
+            return []
+
+        devices = await self._fetch_otbr_devices()
+        candidates = self._extract_otbr_candidates(devices)
+        if not candidates:
+            logger.info("No OTBR REST device candidates available")
+            return []
+
+        logger.info("OTBR REST returned %d candidate(s)", len(candidates))
+
+        results = []
+        for candidate in candidates:
+            ipv6_addr = candidate['ipv6_address']
+            if ipv6_addr in self.cycle_addresses:
+                continue
+
+            logger.info(
+                "Probing OTBR device candidate: %s (%s)",
+                ipv6_addr,
+                candidate['device_id'],
+            )
+            resources = await self.query_device_resources(ipv6_addr)
+            if not resources:
+                logger.debug("OTBR candidate did not respond: %s", ipv6_addr)
+                continue
+
+            self.cycle_addresses.add(ipv6_addr)
+            logger.info("OTBR device responded: %s", ipv6_addr)
+            results.append(
+                await self.registry.register_device(
+                    ipv6_addr,
+                    eui64=candidate.get('eui64'),
+                    resources=resources,
+                )
+            )
 
         return results
 
@@ -275,6 +330,180 @@ class CoAPDiscovery:
             await self.context.shutdown()
             logger.info("CoAP discovery context shut down")
 
+    async def _fetch_otbr_devices(self):
+        action_id = await self._trigger_otbr_device_refresh()
+        if action_id:
+            await self._wait_for_otbr_action(action_id)
+
+        response = await self._otbr_request_json(
+            'GET',
+            f'{self.otbr_rest_url}/devices',
+            headers={'Accept': 'application/vnd.api+json'},
+        )
+        if not response:
+            return []
+
+        data = response.get('data')
+        if isinstance(data, list):
+            return data
+
+        if isinstance(response, list):
+            return response
+
+        return []
+
+    async def _trigger_otbr_device_refresh(self):
+        payload = {
+            'data': [
+                {
+                    'type': 'updateDeviceCollectionTask',
+                    'attributes': {
+                        'maxAge': 30,
+                        'maxRetries': 3,
+                        'deviceCount': 50,
+                        'timeout': 15,
+                    },
+                }
+            ]
+        }
+
+        response = await self._otbr_request_json(
+            'POST',
+            f'{self.otbr_rest_url}/actions',
+            headers={
+                'Accept': 'application/vnd.api+json',
+                'Content-Type': 'application/vnd.api+json',
+            },
+            payload=payload,
+        )
+        if not response:
+            return None
+
+        data = response.get('data')
+        if isinstance(data, list) and data:
+            action = data[0]
+        elif isinstance(data, dict):
+            action = data
+        else:
+            logger.debug("Unexpected OTBR action response: %s", response)
+            return None
+
+        action_id = action.get('id')
+        if action_id:
+            logger.debug("Started OTBR device refresh action %s", action_id)
+        return action_id
+
+    async def _wait_for_otbr_action(self, action_id):
+        deadline = asyncio.get_running_loop().time() + self.OTBR_ACTION_MAX_WAIT
+
+        while asyncio.get_running_loop().time() < deadline:
+            response = await self._otbr_request_json(
+                'GET',
+                f'{self.otbr_rest_url}/actions/{action_id}',
+                headers={'Accept': 'application/vnd.api+json'},
+            )
+            if not response:
+                return
+
+            data = response.get('data')
+            if isinstance(data, list):
+                data = data[0] if data else {}
+
+            status = ((data or {}).get('attributes') or {}).get('status')
+            if status == 'completed':
+                logger.debug("OTBR device refresh action %s completed", action_id)
+                return
+
+            if status in {'failed', 'stopped'}:
+                logger.warning("OTBR device refresh action %s ended with status=%s", action_id, status)
+                return
+
+            await asyncio.sleep(self.OTBR_ACTION_POLL_INTERVAL)
+
+        logger.warning("Timed out waiting for OTBR action %s", action_id)
+
+    async def _otbr_request_json(self, method, url, headers=None, payload=None):
+        return await asyncio.to_thread(
+            self._otbr_request_json_sync,
+            method,
+            url,
+            headers or {},
+            payload,
+        )
+
+    def _otbr_request_json_sync(self, method, url, headers, payload):
+        data = None
+        request_headers = dict(headers)
+        if payload is not None:
+            data = json.dumps(payload).encode('utf-8')
+            request_headers.setdefault('Content-Type', 'application/json')
+
+        request = urllib_request.Request(
+            url,
+            data=data,
+            headers=request_headers,
+            method=method,
+        )
+
+        try:
+            with urllib_request.urlopen(request, timeout=self.OTBR_HTTP_TIMEOUT) as response:
+                body = response.read().decode('utf-8')
+        except urllib_error.HTTPError as exc:
+            body = exc.read().decode('utf-8', errors='ignore')
+            logger.debug("OTBR HTTP %s for %s: %s", exc.code, url, body)
+            return None
+        except urllib_error.URLError as exc:
+            logger.debug("OTBR request failed for %s: %s", url, exc)
+            return None
+        except Exception as exc:
+            logger.debug("Unexpected OTBR request failure for %s: %s", url, exc)
+            return None
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            logger.debug("Invalid OTBR JSON from %s: %s", url, body)
+            return None
+
+    def _extract_otbr_candidates(self, devices):
+        candidates = []
+        seen = set()
+
+        for device in devices:
+            device_type = device.get('type')
+            if device_type and device_type != 'threadDevice':
+                continue
+
+            attributes = device.get('attributes') or device
+            device_id = device.get('id') or attributes.get('extAddress')
+            if not device_id:
+                continue
+
+            omr_addresses = attributes.get('omrIpv6Address')
+            if isinstance(omr_addresses, str):
+                omr_addresses = [omr_addresses]
+            elif not isinstance(omr_addresses, list):
+                omr_addresses = []
+
+            eui64 = attributes.get('eui64') or attributes.get('eui')
+
+            for address in omr_addresses:
+                normalized = self._normalize_candidate(address)
+                if not normalized or normalized in seen:
+                    continue
+
+                seen.add(normalized)
+                candidates.append(
+                    {
+                        'device_id': device_id,
+                        'ipv6_address': normalized,
+                        'eui64': eui64,
+                        'role': attributes.get('role'),
+                    }
+                )
+
+        return candidates
+
     async def _collect_interface_candidates(self):
         candidates = set()
 
@@ -427,6 +656,16 @@ class CoAPDiscovery:
             return None
 
         return addr.compressed
+
+    def _normalize_otbr_rest_url(self, value):
+        if value is None:
+            return None
+
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+
+        return candidate.rstrip('/')
 
     def _normalize_seed_addresses(self, values):
         if values is None:

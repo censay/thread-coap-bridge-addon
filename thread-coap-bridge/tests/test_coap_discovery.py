@@ -151,3 +151,111 @@ def test_interface_candidates_are_probed_before_multicast():
         assert results == [{"device_id": "thread_iface", "ipv6_addr": "fd35:5807:223f:1:235e:586d:bd3b:4921"}]
 
     run(scenario())
+
+
+def test_otbr_device_payload_extracts_omr_candidates_and_eui64():
+    discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://core-openthread-border-router:8081/api"})
+
+    devices = [
+        {
+            "id": "96518e5497d5b9f3",
+            "type": "threadBorderRouter",
+            "attributes": {
+                "extAddress": "96518e5497d5b9f3",
+                "omrIpv6Address": ["fd35:5807:223f:1:426e:bdbf:1ec3:ee80"],
+                "role": "leader",
+            },
+        },
+        {
+            "id": "de62e016db392476",
+            "type": "threadDevice",
+            "attributes": {
+                "extAddress": "de62e016db392476",
+                "omrIpv6Address": ["fd35:5807:223f:1:235e:586d:bd3b:4921"],
+                "eui64": "62:34:56:78:90:aa:cd:ea",
+                "role": "child",
+            },
+        },
+        {
+            "id": "de62e016db392477",
+            "attributes": {
+                "extAddress": "de62e016db392477",
+                "omrIpv6Address": [
+                    "fd35:5807:223f:1:235e:586d:bd3b:4921",
+                    "fe80::1",
+                    "fd35:5807:223f:1:1111:2222:3333:4444",
+                ],
+                "eui": "90:35:ea:ff:fe:f3:e0:9c",
+                "role": "router",
+            },
+        },
+    ]
+
+    candidates = discovery._extract_otbr_candidates(devices)
+
+    assert candidates == [
+        {
+            "device_id": "de62e016db392476",
+            "ipv6_address": "fd35:5807:223f:1:235e:586d:bd3b:4921",
+            "eui64": "62:34:56:78:90:aa:cd:ea",
+            "role": "child",
+        },
+        {
+            "device_id": "de62e016db392477",
+            "ipv6_address": "fd35:5807:223f:1:1111:2222:3333:4444",
+            "eui64": "90:35:ea:ff:fe:f3:e0:9c",
+            "role": "router",
+        },
+    ]
+
+
+def test_otbr_candidates_are_probed_before_interface_and_multicast():
+    class FakeRegistry:
+        def __init__(self):
+            self.calls = []
+
+        async def register_device(self, ipv6_addr, eui64=None, resources=None):
+            self.calls.append((ipv6_addr, eui64, resources))
+            return {"device_id": "thread_otbr", "ipv6_addr": ipv6_addr}
+
+    async def scenario():
+        registry = FakeRegistry()
+        discovery = CoAPDiscovery(
+            registry,
+            {"otbr_rest_url": "http://core-openthread-border-router:8081/api"},
+        )
+        discovery.context = object()
+        discovery.start_cycle()
+
+        async def fake_fetch_otbr_devices():
+            return [
+                {
+                    "id": "de62e016db392476",
+                    "attributes": {
+                        "extAddress": "de62e016db392476",
+                        "omrIpv6Address": ["fd35:5807:223f:1:235e:586d:bd3b:4921"],
+                        "eui64": "62:34:56:78:90:aa:cd:ea",
+                    },
+                }
+            ]
+
+        async def fake_query(ipv6_addr, timeout=65.0):
+            assert timeout == 65.0
+            assert ipv6_addr == "fd35:5807:223f:1:235e:586d:bd3b:4921"
+            return [{"uri_path": "/auth", "resource_type": "auth", "observable": False}]
+
+        discovery._fetch_otbr_devices = fake_fetch_otbr_devices
+        discovery.query_device_resources = fake_query
+
+        results = await discovery.discover_otbr_devices()
+
+        assert registry.calls == [
+            (
+                "fd35:5807:223f:1:235e:586d:bd3b:4921",
+                "62:34:56:78:90:aa:cd:ea",
+                [{"uri_path": "/auth", "resource_type": "auth", "observable": False}],
+            )
+        ]
+        assert results == [{"device_id": "thread_otbr", "ipv6_addr": "fd35:5807:223f:1:235e:586d:bd3b:4921"}]
+
+    run(scenario())
