@@ -9,6 +9,7 @@ import asyncio
 import ipaddress
 import logging
 import re
+from asyncio.subprocess import PIPE
 from aiocoap import Context, Message, GET, NON
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ class CoAPDiscovery:
 
     WELL_KNOWN_CORE = "/.well-known/core"
     DISCOVERY_TIMEOUT = 5.0
+    COMMAND_TIMEOUT = 3.0
     MULTICAST_GROUPS = ['ff03::fd', 'ff03::1']
 
     def __init__(self, device_registry, config):
@@ -73,12 +75,13 @@ class CoAPDiscovery:
         return results
 
     async def discover_devices(self):
-        """Perform one multicast discovery cycle and reconcile all replies."""
+        """Perform one discovery cycle and reconcile all replies."""
         if not self.context:
             logger.error("CoAP context not initialized")
             return []
 
         results = []
+        results.extend(await self.discover_interface_devices())
 
         for mcast_addr in self.MULTICAST_GROUPS:
             try:
@@ -114,6 +117,45 @@ class CoAPDiscovery:
 
         if not self.cycle_addresses:
             logger.warning("No devices discovered via multicast - devices may not be responding to multicast")
+
+        return results
+
+    async def discover_interface_devices(self):
+        """Probe IPv6 candidates derived from the local Thread interface state."""
+        if not self.context:
+            logger.error("CoAP context not initialized")
+            return []
+
+        candidates = await self._collect_interface_candidates()
+        if not candidates:
+            logger.info(
+                "No interface-derived IPv6 candidates found on %s",
+                self.thread_interface,
+            )
+            return []
+
+        logger.info(
+            "Discovered %d interface-derived candidate(s) on %s",
+            len(candidates),
+            self.thread_interface,
+        )
+
+        results = []
+        for ipv6_addr in candidates:
+            if ipv6_addr in self.cycle_addresses:
+                continue
+
+            logger.info("Probing interface-derived candidate: %s", ipv6_addr)
+            resources = await self.query_device_resources(ipv6_addr)
+            if not resources:
+                logger.debug("Candidate did not respond: %s", ipv6_addr)
+                continue
+
+            self.cycle_addresses.add(ipv6_addr)
+            logger.info("Interface-derived device responded: %s", ipv6_addr)
+            results.append(
+                await self.registry.register_device(ipv6_addr, resources=resources)
+            )
 
         return results
 
@@ -232,6 +274,159 @@ class CoAPDiscovery:
         if self.context:
             await self.context.shutdown()
             logger.info("CoAP discovery context shut down")
+
+    async def _collect_interface_candidates(self):
+        candidates = set()
+
+        local_addrs_output = await self._run_command(
+            ['ip', '-6', 'addr', 'show', 'dev', self.thread_interface]
+        )
+        local_addrs = self._extract_interface_addresses(local_addrs_output)
+
+        neigh_output = await self._run_command(
+            ['ip', '-6', 'neigh', 'show', 'dev', self.thread_interface]
+        )
+        candidates.update(self._extract_neighbor_candidates(neigh_output))
+
+        route_output = await self._run_command(
+            ['ip', '-6', 'route', 'show', 'dev', self.thread_interface]
+        )
+        candidates.update(self._extract_route_candidates(route_output))
+
+        filtered = sorted(addr for addr in candidates if addr not in local_addrs)
+        logger.debug(
+            "Interface candidates after filtering local addresses: %s",
+            filtered,
+        )
+        return filtered
+
+    async def _run_command(self, argv):
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+        except FileNotFoundError:
+            logger.warning("Command not available: %s", argv[0])
+            return ""
+        except Exception as exc:
+            logger.error("Failed to start command %s: %s", argv, exc)
+            return ""
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.COMMAND_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            logger.warning("Command timed out: %s", " ".join(argv))
+            return ""
+
+        if process.returncode != 0:
+            err_text = stderr.decode('utf-8', errors='ignore').strip()
+            logger.debug(
+                "Command returned %d for %s: %s",
+                process.returncode,
+                " ".join(argv),
+                err_text,
+            )
+            return ""
+
+        return stdout.decode('utf-8', errors='ignore')
+
+    def _extract_interface_addresses(self, output):
+        candidates = set()
+
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if 'inet6 ' not in line:
+                continue
+
+            parts = line.split()
+            try:
+                inet6_idx = parts.index('inet6')
+            except ValueError:
+                continue
+
+            if len(parts) <= inet6_idx + 1:
+                continue
+
+            token = parts[inet6_idx + 1].split('/')[0]
+            normalized = self._normalize_candidate(token)
+            if normalized:
+                candidates.add(normalized)
+
+        return candidates
+
+    def _extract_neighbor_candidates(self, output):
+        candidates = set()
+
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            token = line.split()[0]
+            normalized = self._normalize_candidate(token)
+            if normalized:
+                candidates.add(normalized)
+
+        return candidates
+
+    def _extract_route_candidates(self, output):
+        candidates = set()
+
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            token = line.split()[0]
+            if token == 'default':
+                continue
+
+            if '/' in token:
+                try:
+                    network = ipaddress.IPv6Network(token, strict=False)
+                except ValueError:
+                    continue
+
+                if network.prefixlen != 128:
+                    continue
+
+                token = str(network.network_address)
+
+            normalized = self._normalize_candidate(token)
+            if normalized:
+                candidates.add(normalized)
+
+        return candidates
+
+    def _normalize_candidate(self, value):
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+
+        candidate = candidate.strip('[]')
+        candidate = candidate.split('%')[0]
+
+        try:
+            addr = ipaddress.IPv6Address(candidate)
+        except ValueError:
+            return None
+
+        if (
+            addr.is_multicast
+            or addr.is_link_local
+            or addr.is_loopback
+            or addr.is_unspecified
+        ):
+            return None
+
+        return addr.compressed
 
     def _normalize_seed_addresses(self, values):
         if values is None:
