@@ -64,8 +64,9 @@ Those were stale guesses.
 The current logic is:
 
 - if `otbr_rest_url` is set, use it as a direct override
-- otherwise, query Supervisor for the installed OTBR add-on
-- extract its runtime add-on IP or hostname
+- otherwise, probe known OTBR add-on `info` endpoints via Supervisor first
+- only fall back to broader Supervisor add-on enumeration when direct OTBR probes miss
+- extract the runtime OTBR add-on IP or hostname
 - probe `http://<resolved-bind>:8081/api/devices`
 
 If that inventory endpoint returns `404`, the bridge logs the OTBR web surface and disables OTBR inventory for that process run instead of retrying a stale path forever.

@@ -17,7 +17,7 @@ It also removes stale OTBR assumptions from the previous iteration:
 
 - the bridge no longer guesses OTBR web addresses
 - the bridge no longer assumes `/api/devices` exists on every HA OTBR build
-- OTBR resolution now prefers Supervisor add-on metadata
+- OTBR resolution now prefers low-privilege Supervisor add-on info probes before broader add-on enumeration
 - when OTBR web is reachable but inventory is absent, the bridge logs that fact explicitly and continues with the other discovery paths
 
 The immediate success target for this path is one visible device with `/uptime`. If the device also exposes additional endpoints, the bridge will reconcile those automatically.
@@ -154,6 +154,7 @@ Home Assistant discovery topics under `homeassistant/...` are for HA entity regi
 The maintained bridge now distinguishes these cases explicitly:
 
 - OTBR add-on not found via Supervisor API
+- Supervisor add-on listing denied while direct OTBR `info` probes remain available
 - OTBR add-on found but web bind unreachable
 - OTBR web bind reachable but `/api/devices` missing on that build
 - OTBR inventory reachable but empty

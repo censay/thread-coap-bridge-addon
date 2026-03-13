@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `otbr_rest_url` is now an optional override instead of a hardcoded localhost default
 - OTBR inventory discovery now uses the resolved OTBR web base and disables itself for the current run when `/api/devices` returns `404`
+- OTBR resolution now tries direct Supervisor `info` probes for known OTBR add-on slugs before broader add-on enumeration
 - Add-on version updated to `0.6.4`
 
 ### Fixed

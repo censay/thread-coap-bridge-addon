@@ -38,6 +38,10 @@ class CoAPDiscovery:
     SUPERVISOR_URL = "http://supervisor"
     OTBR_INVENTORY_PATH = "/api/devices"
     OTBR_DIAGNOSTIC_PATHS = ("/", "/get_properties", "/api/node", "/node")
+    OTBR_ADDON_SLUG_CANDIDATES = (
+        "core_openthread_border_router",
+        "local_openthread_border_router",
+    )
     MULTICAST_GROUPS = ['ff03::fd', 'ff03::1']
 
     def __init__(self, device_registry, config):
@@ -426,7 +430,7 @@ class CoAPDiscovery:
             )
             return None
 
-        addon_slug = await self._find_otbr_addon_slug()
+        addon_slug = await self._resolve_otbr_addon_slug()
         if not addon_slug:
             self._log_once(
                 'otbr-addon-missing',
@@ -472,6 +476,32 @@ class CoAPDiscovery:
         self.otbr_base_url = base_url
         logger.info("Resolved OTBR web base via Supervisor API: %s", base_url)
         return base_url
+
+    async def _resolve_otbr_addon_slug(self):
+        for slug in self.OTBR_ADDON_SLUG_CANDIDATES:
+            response = await self._supervisor_request(
+                'GET',
+                f'/addons/{urllib_parse.quote(slug, safe="")}/info',
+            )
+            if response is None:
+                continue
+
+            if response.status == 200:
+                return slug
+
+            if response.status == 404:
+                continue
+
+            if response.status == 403:
+                self._log_once(
+                    f'otbr-addon-info-http:{slug}:403',
+                    logging.WARNING,
+                    "Supervisor API returned HTTP 403 for OTBR add-on info (%s)",
+                    slug,
+                )
+                return None
+
+        return await self._find_otbr_addon_slug()
 
     async def _find_otbr_addon_slug(self):
         response = await self._supervisor_request('GET', '/addons')

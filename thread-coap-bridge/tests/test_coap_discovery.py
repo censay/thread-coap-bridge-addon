@@ -217,30 +217,20 @@ def test_otbr_base_url_normalizer_strips_optional_api_suffix():
     assert discovery._normalize_otbr_base_url("") is None
 
 
-def test_find_otbr_addon_slug_prefers_core_slug():
+def test_resolve_otbr_addon_slug_prefers_direct_core_slug_probe():
     async def scenario():
         discovery = CoAPDiscovery(None, {})
         discovery.supervisor_token = "token"
 
         async def fake_supervisor_request(method, path, payload=None):
             assert method == "GET"
-            assert path == "/addons"
-            return HttpResponse(
-                200,
-                "",
-                {
-                    "data": {
-                        "addons": [
-                            {"slug": "local_openthread_border_router", "name": "OpenThread Border Router"},
-                            {"slug": "core_openthread_border_router", "name": "OpenThread Border Router"},
-                        ]
-                    }
-                },
-            )
+            if path == "/addons/core_openthread_border_router/info":
+                return HttpResponse(200, "", {"data": {"slug": "core_openthread_border_router"}})
+            raise AssertionError(path)
 
         discovery._supervisor_request = fake_supervisor_request
 
-        assert await discovery._find_otbr_addon_slug() == "core_openthread_border_router"
+        assert await discovery._resolve_otbr_addon_slug() == "core_openthread_border_router"
 
     run(scenario())
 
@@ -251,13 +241,6 @@ def test_resolve_otbr_base_url_uses_supervisor_ip_address():
         discovery.supervisor_token = "token"
 
         async def fake_supervisor_request(method, path, payload=None):
-            if path == "/addons":
-                return HttpResponse(
-                    200,
-                    "",
-                    {"data": {"addons": [{"slug": "core_openthread_border_router"}]}},
-                )
-
             if path == "/addons/core_openthread_border_router/info":
                 return HttpResponse(
                     200,
@@ -276,6 +259,37 @@ def test_resolve_otbr_base_url_uses_supervisor_ip_address():
         discovery._supervisor_request = fake_supervisor_request
 
         assert await discovery._resolve_otbr_base_url() == "http://172.30.32.1:8081"
+
+    run(scenario())
+
+
+def test_resolve_otbr_addon_slug_falls_back_to_addon_listing_when_direct_probe_misses():
+    async def scenario():
+        discovery = CoAPDiscovery(None, {})
+        discovery.supervisor_token = "token"
+
+        async def fake_supervisor_request(method, path, payload=None):
+            if path == "/addons/core_openthread_border_router/info":
+                return HttpResponse(404, "", {"message": "missing"})
+            if path == "/addons/local_openthread_border_router/info":
+                return HttpResponse(404, "", {"message": "missing"})
+            if path == "/addons":
+                return HttpResponse(
+                    200,
+                    "",
+                    {
+                        "data": {
+                            "addons": [
+                                {"slug": "custom_repo_openthread_border_router", "name": "OpenThread Border Router"},
+                            ]
+                        }
+                    },
+                )
+            raise AssertionError(path)
+
+        discovery._supervisor_request = fake_supervisor_request
+
+        assert await discovery._resolve_otbr_addon_slug() == "custom_repo_openthread_border_router"
 
     run(scenario())
 
