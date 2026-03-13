@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-03-12
+
+### Added
+- Supervisor-based OTBR add-on resolution using runtime add-on metadata instead of guessed hostnames
+- OTBR web surface diagnostics when the configured HA OTBR build does not expose `/api/devices`
+- Documentation sections for validated sources of truth and the current HAOS + OTBR discovery path
+
+### Changed
+- `otbr_rest_url` is now an optional override instead of a hardcoded localhost default
+- OTBR inventory discovery now uses the resolved OTBR web base and disables itself for the current run when `/api/devices` returns `404`
+- Add-on version updated to `0.6.4`
+
+### Fixed
+- Removed stale OTBR endpoint guesses from discovery logic and documentation
+- Stopped treating OTBR inventory absence as if it were the same as “no Thread devices exist”
+
 ## [0.6.1] - 2026-03-12
 
 ### Added

@@ -1,487 +1,256 @@
-# Thread CoAP Bridge - Home Assistant Add-on 2.0
+# Thread CoAP Bridge - v0.6.4
 
-A Home Assistant add-on that bridges CoAP-enabled devices on Thread networks to Home Assistant via MQTT Discovery.
+Home Assistant add-on for bridging Thread-attached CoAP devices into MQTT Discovery and stable `thread/...` topics.
 
-## Features
+Repository: `https://github.com/censay/thread-coap-bridge-addon`
 
-- Automatic device discovery via CoAP multicast
-- Real-time state updates using CoAP polling
-- MQTT Discovery integration (devices appear automatically in HA)
-- Support for lights, switches, sensors, and battery monitoring
-- Automatic capability reconciliation when resources are added or removed
-- First-class `/auth` support with `auth_request` and `auth_tier` entities
-- Seed-based unicast bootstrap for first contact when multicast discovery on `wpan0` is unreliable
-- Multi-architecture support (amd64, aarch64, armv7)
-- **Robust offline detection** with configurable thresholds
-- **Automatic device cleanup** for long-offline devices
-- **Automatic re-discovery** when devices return online
-- **SED (Sleepy End Device) support** with 65-second timeouts
+## Current Status
 
-## Recent Changes (v0.6.1)
+This version keeps the important forked functionality intact:
 
-### Seed Bootstrap and Endpoint Correctness
+- capability reconciliation from `/.well-known/core`
+- `/auth` entities and bridge-side signature verification
+- SED-friendly timeouts and offline recovery
+- MQTT-first backend contract
 
-- Added `seed_ipv6_addresses` so an empty bridge registry can bootstrap known devices via unicast before multicast
-- Discovery cycles now probe configured seed addresses before multicast and offline re-discovery
-- Bridge MQTT output is the intended backend-facing contract for availability, uptime, and verified `auth_tier`
+It also removes stale OTBR assumptions from the previous iteration:
 
-## Recent Changes (v0.6.0)
+- the bridge no longer guesses OTBR web addresses
+- the bridge no longer assumes `/api/devices` exists on every HA OTBR build
+- OTBR resolution now prefers Supervisor add-on metadata
+- when OTBR web is reachable but inventory is absent, the bridge logs that fact explicitly and continues with the other discovery paths
 
-### Capability Reconciliation and `/auth`
+The immediate success target for this path is one visible device with `/uptime`. If the device also exposes additional endpoints, the bridge will reconcile those automatically.
 
-- Successful `/.well-known/core` responses now drive capability reconciliation instead of sticky one-time discovery
-- Added a resource-handler layer so known resource types and future developer-added resource types are handled explicitly
-- Added bridge-side `/auth` support with an `auth_request` button, an `auth_tier` sensor, and ECDSA P-256 signature verification
-- Repository metadata and install instructions now target the maintained `censay` fork: `https://github.com/censay/thread-coap-bridge-addon`
+## Discovery Order
 
-## Seed Bootstrap and MQTT Contract
+Each discovery cycle now works in this order:
 
-When `aiocoap` cannot discover new devices via multicast on `wpan0`, configure `seed_ipv6_addresses` in the add-on options with one or more known device Thread IPv6 addresses. Each discovery cycle will probe those addresses with unicast `GET /.well-known/core` before attempting multicast. A successful reply enters the normal registry and MQTT discovery flow; no manual `devices.db` edits are required.
+1. Optional OTBR inventory, if the installed OTBR build exposes a usable inventory endpoint
+2. Optional seed IPv6 bootstrap from `seed_ipv6_addresses`
+3. Interface-derived IPv6 candidates from `wpan0`
+4. Multicast `/.well-known/core`
+5. Unicast re-discovery of previously known offline devices
 
-For backend integration on your LAN, consume bridge-published MQTT topics instead of talking directly to Thread IPv6:
+This preserves the fork’s useful fallback behavior without pretending that any one path is universally available on every HAOS installation.
+
+## Sources Of Truth
+
+Use these in order when diagnosing the system:
+
+### Firmware / device truth
+
+- `C:\myfw\dot-kit\README.md`
+- `C:\myfw\dot-kit\prj_uart.conf`
+- serial shell commands:
+  - `ot state`
+  - `ot ipaddr`
+  - `ot ping <thread-side-target-ipv6> 16 3`
+
+### OTBR truth
+
+- `ot-ctl neighbor table`
+- `ot-ctl child table`
+- `/tmp/otbr-agent-rest-api` inside the OTBR add-on
+- actual HTTP status codes from the OTBR web bind
+
+### Bridge truth
+
+- add-on logs from this bridge
+- `devices.db`
+- MQTT topics under:
+  - `thread/{device_id}/...`
+  - `homeassistant/...`
+
+Do not treat guessed URLs, guessed container names, or LAN hostnames as sources of truth.
+
+## What This Add-on Does
+
+- Discovers CoAP-enabled devices on a Thread mesh
+- Parses `/.well-known/core` and maps resources to Home Assistant entities
+- Publishes Home Assistant MQTT Discovery config
+- Publishes stable backend-facing `thread/...` topics
+- Polls and observes resources according to resource type
+- Reconciles runtime changes when the firmware adds or removes endpoints
+- Exposes `/auth` as:
+  - `auth_tier` sensor
+  - `auth_request` button
+
+## Configuration
+
+### Example
+
+```yaml
+mqtt_host: core-mosquitto
+mqtt_port: 1883
+mqtt_user: homeassistant
+mqtt_password: your_secure_password
+discovery_interval: 60
+log_level: info
+thread_interface: wpan0
+multicast_address: ff03::fd
+otbr_rest_url: ""
+seed_ipv6_addresses: []
+offline_threshold_polls: 5
+cleanup_after_hours: 24
+cleanup_check_interval: 3600
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `mqtt_host` | MQTT broker hostname | `core-mosquitto` |
+| `mqtt_port` | MQTT broker port | `1883` |
+| `mqtt_user` | MQTT username | `homeassistant` |
+| `mqtt_password` | MQTT password | `""` |
+| `discovery_interval` | Discovery interval in seconds | `60` |
+| `log_level` | `debug`, `info`, `warning`, `error` | `info` |
+| `thread_interface` | Thread interface name | `wpan0` |
+| `multicast_address` | Multicast group used for discovery attempts | `ff03::fd` |
+| `otbr_rest_url` | Optional OTBR web base URL override. Accepts either `http://host:8081` or `http://host:8081/api` | `""` |
+| `seed_ipv6_addresses` | Optional seed addresses for first-contact unicast bootstrap | `[]` |
+| `offline_threshold_polls` | Failures before the bridge marks a device offline | `5` |
+| `cleanup_after_hours` | Offline age before cleanup | `24` |
+| `cleanup_check_interval` | Cleanup loop interval in seconds | `3600` |
+
+`otbr_rest_url` is an override, not a hardcoded default. On Home Assistant OS the bridge now prefers Supervisor metadata to discover OTBR dynamically.
+
+## Device Requirements
+
+Devices should expose:
+
+- CoAP on UDP/5683
+- `/.well-known/core`
+- resources with useful `rt`, `if`, and `obs` attributes
+
+Recommended minimum for this project path:
+
+- `/uptime`
+- `/auth`
+- observable button or switch resource if user interaction matters
+
+Example CoRE Link Format:
+
+```text
+</sw>;rt="button";if="sensor";obs,
+</uptime>;rt="uptime";if="sensor",
+</auth>;rt="auth";if="rw"
+```
+
+## MQTT Contract
+
+The bridge’s stable backend-facing contract is MQTT, not raw Thread IPv6:
 
 - `thread/{device_id}/availability`
 - `thread/{device_id}/{resource}/state`
 - `thread/{device_id}/{resource}/availability`
 - `thread/{device_id}/auth_tier/state`
 
-Home Assistant discovery topics under `homeassistant/...` remain for HA only. Backend services should treat the retained `thread/...` topics as the stable integration surface.
+Home Assistant discovery topics under `homeassistant/...` are for HA entity registration only.
 
-## Recent Changes (v0.5.0)
+## Discovery Notes For HAOS + OTBR
 
-### Home Assistant `state_class` Investigation
+The maintained bridge now distinguishes these cases explicitly:
 
-**Investigation:** Battery and voltage sensors were not updating in Home Assistant UI despite successful MQTT publishes. Uptime (integer seconds) worked fine, but battery (%) and voltage (V) appeared stuck.
+- OTBR add-on not found via Supervisor API
+- OTBR add-on found but web bind unreachable
+- OTBR web bind reachable but `/api/devices` missing on that build
+- OTBR inventory reachable but empty
 
-#### Home Assistant's `state_class` Philosophy
+That distinction matters because the same HAOS setup can have:
 
-Home Assistant's statistics engine is strict about `state_class`:
+- a healthy Thread mesh
+- a reachable OTBR web service
+- no OTBR inventory endpoint for network-wide device enumeration
 
-| state_class | Expected Behavior | Suitable For |
-|-------------|-------------------|--------------|
-| `measurement` | Value changes frequently, "instantaneous" | Temperature, power |
-| `total_increasing` | Value always increases, resets allowed | Energy, uptime |
-| *none* | Value may stay constant for long periods | Battery %, voltage |
+In that case the bridge must fall back cleanly instead of reporting “no devices” as if the whole mesh were empty.
 
-When HA sees `state_class: measurement` combined with:
-- Same value as before
-- Retained MQTT messages (`retain=True`)
-- Slow-changing sensors
+## Preserved Fork Behavior
 
-...it may **not update the UI** because:
-1. Value didn't change numerically → statistics engine discards duplicate
-2. Timestamp doesn't advance meaningfully
-3. Long-term statistics optimization skips "redundant" data
+These behaviors remain part of the maintained fork and are not being discarded:
 
-#### Configuration Changes (for reference)
+- runtime capability reconciliation
+- `/auth` bootstrap and signature verification
+- SED-aware 65-second CoAP timeouts
+- unicast re-discovery of offline devices
+- retained MQTT state publishing
+- per-resource observe parsing from `/.well-known/core`
 
-```python
-# mqtt_publisher.py - removed state_class for slow-changing sensors
-if resource_lower == "battery":
-    payload["device_class"] = "battery"
-    # NO state_class - battery % may stay constant for hours
-# voltage: NO device_class or state_class
-# Removing device_class allows voltage to display as "4.08" instead of "4" (integer)
+Historical detail stays in `CHANGELOG.md`.
+
+## Troubleshooting
+
+### Device-side checks
+
+Use the device shell:
+
+```text
+ot state
+ot ipaddr
+ot ping <thread-side-target-ipv6> 16 3
 ```
 
-**Note:** Removing `state_class` aligns with HA's philosophy for slow-changing sensors but may not fully resolve UI update issues. The root cause may be deeper in HA's state management.
+Expected:
 
-**Current configuration:**
-- **Battery**: `device_class: battery` only (shows % icon)
-- **Voltage**: No device_class (preserves decimal formatting: 4.08V instead of 4V)
-- **Uptime**: `state_class: total_increasing` (correctly models always-increasing value)
+- `ot state` reaches `child`
+- `ot ipaddr` includes a Thread-routed address
+- `ot ping` to the OTBR Thread-side IPv6 succeeds
 
-#### Testing Results
+### OTBR checks
 
-| Test | Result |
-|------|--------|
-| **Out-of-range test** | Device moved out of Thread range → after 240s child timeout, Thread parent dropped child → sensors showed "Unavailable" in HA UI |
-| **Return online** | Device returned to range → unicast re-discovery found it → sensors came back online automatically |
-| **Device reset** | Device power-cycled → uptime decreased detected → CoAP Observe re-registered automatically |
+From the OTBR add-on:
 
----
-
-## Recent Changes (v0.4.0)
-
-### SED (Sleepy End Device) Support
-
-Added full support for Thread Sleepy End Devices, which sleep most of the time to conserve battery.
-
-#### How SED Devices Work
-
-SED devices keep their radio OFF between poll intervals (typically 60 seconds) to achieve ultra-low power consumption. When the bridge sends a request to an SED:
-
-1. Request is sent to the SED's IPv6 address
-2. Parent router queues the request (SED is sleeping)
-3. SED wakes at its next poll interval (up to 60s later)
-4. SED receives the queued request from parent
-5. SED processes and responds
-6. Bridge receives response
-
-#### Changes for SED Support
-
-**Increased timeouts to 65 seconds** (longer than typical 60s poll period):
-
-| Function | Old Timeout | New Timeout |
-|----------|-------------|-------------|
-| `get_resource()` | 10s | 65s |
-| `put_resource()` | 10s | 65s |
-| `observe_resource()` initial | 15s | 65s |
-| `query_device_resources()` | 5s | 65s |
-
-**Why 65 seconds?** SED devices poll every 60 seconds by default. The extra 5 seconds provides margin for network latency and processing time.
-
-#### SED Device Discovery
-
-SED devices require special handling for initial discovery:
-
-1. **During boot**: SED firmware stays awake for a "grace period" (typically 2 minutes)
-2. **Bridge discovers device** via multicast during this window
-3. **After grace period**: Device enters SED sleep mode
-4. **Re-discovery**: Uses unicast probing to last-known IPv6 (works with SED)
-
-#### Latency Expectations with SED
-
-| Operation | MTD (always-on) | SED (sleepy) |
-|-----------|-----------------|--------------|
-| Button notification | ~50ms | ~100-200ms |
-| GET /battery | ~50ms | Up to 60s |
-| PUT /led | ~50ms | Up to 60s |
-
-**Note:** Button notifications remain fast because the SED wakes immediately on GPIO interrupt and sends the notification. Only *incoming* requests have latency.
-
----
-
-## Recent Changes (v0.3.0)
-
-### Unicast Re-Discovery Fix
-
-Fixed critical issue where devices could not be re-discovered after extended disconnection (~15+ minutes).
-
-#### Problem
-After a device went offline for extended period and returned, multicast discovery failed to find it. The device stayed "Unavailable" in Home Assistant indefinitely.
-
-#### Root Cause
-The aiocoap library has a known limitation with multicast on Thread/wpan0 interfaces - it falls back to broken unicast behavior with the warning: `"Sending request to multicast via unicast request method"`. This means multicast discovery was never truly reliable.
-
-#### Solution
-Added **unicast re-discovery** that probes known offline devices directly:
-
-1. When a device is marked offline (5 failures), its IP is removed from the discovery cache
-2. Every discovery cycle (60s), the bridge queries offline devices via **unicast CoAP GET** to their last-known IPv6
-3. Since SLAAC addresses (based on EUI-64) are stable across Thread reconnections, this reliably finds returning devices
-4. Device is re-registered and polling resumes automatically
-
-#### New Files/Methods
-- `device_registry.py`: Added `get_offline_devices()` - queries devices where `is_online=0`
-- `coap_discovery.py`: Added `rediscover_offline_devices()` - probes offline devices via unicast
-- `main.py`: Discovery loop now calls both multicast and unicast re-discovery
-- `coap_client.py`: Calls `forget_device()` when marking offline (not just at max_failures)
-
----
-
-## Recent Changes (v0.2.0)
-
-### LED State Display Fix
-
-Fixed critical issue where LED state was not being displayed correctly in Home Assistant UI.
-
-#### Problem
-The LED would show "unknown" or wrong state in HA even though the device was responding correctly.
-
-#### Root Causes & Solutions
-
-1. **MQTT Discovery Schema Mismatch**
-   - Problem: Discovery used `"schema": "json"` which expects `{"state": "ON"}`, but bridge published `"1"` or `"0"`
-   - Solution: Switched to basic light schema with `state_value_template`:
-     ```python
-     payload["state_value_template"] = "{{ 'ON' if value == '1' else 'OFF' }}"
-     ```
-
-2. **Device Response Format**
-   - Problem: Expected `{"state": 1}` but device returns `{"leds": [{"led_id": 0, "state": 1}]}`
-   - Solution: Updated `publish_state()` to extract state from nested array:
-     ```python
-     if 'leds' in state_value and len(state_value['leds']) > 0:
-         led_state = state_value['leds'][0].get('state', 0)
-         payload = str(led_state)
-     ```
-
-3. **UI Flickering After Commands**
-   - Problem: User toggles LED -> UI shows new state -> poll returns old state -> UI flickers back
-   - Solution: Implemented optimistic updates with suppression window:
-     - Immediately publish expected state when command is sent
-     - Suppress poll updates for 10 seconds after command
-     - Clear suppression when device confirms expected state or timeout expires
-
-#### MQTT State Publishing
-
-States are now published with `retain=True` so Home Assistant remembers state across restarts:
-```python
-self.client.publish(state_topic, payload, qos=1, retain=True)
-```
-
-### Robustness Improvements (v0.1.0)
-
-The bridge handles device disconnection and reconnection gracefully:
-
-#### Offline Detection
-- Tracks consecutive poll failures per device
-- Marks device as **offline** in Home Assistant after 5 consecutive failures (~1 minute)
-- Publishes MQTT availability="offline" so HA shows "Unavailable"
-
-#### Polling Behavior
-- Stops polling after 35 consecutive failures (5 offline threshold + 30 extra)
-- Removes device from discovery cache to allow re-registration
-- Discovery continues to run and will find the device when it returns
-
-#### Device Cleanup
-- Background task runs hourly to clean up stale devices
-- Removes devices offline for >24 hours (configurable)
-- Publishes empty MQTT discovery configs to remove from HA UI
-
-#### Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `offline_threshold_polls` | 5 | Failures before marking offline |
-| `cleanup_after_hours` | 24 | Hours offline before removal |
-| `cleanup_check_interval` | 3600 | Seconds between cleanup checks |
-
-#### SED vs MTD Devices
-
-The bridge automatically handles both device types:
-
-| Feature | MTD (Mobile Thread Device) | SED (Sleepy End Device) |
-|---------|---------------------------|------------------------|
-| Radio | Always listening | Sleeps between polls |
-| Power consumption | Higher (~mA) | Ultra-low (~µA) |
-| Request latency | Immediate (~50ms) | Up to poll period (60s) |
-| Push notifications | Immediate | Immediate (GPIO wakes device) |
-| Discovery | Multicast works | Requires grace period at boot |
-
-**Identifying device type** on the border router:
-```shell
+```sh
 ot-ctl neighbor table
-# R=0 → SED (RxOnWhenIdle=false)
-# R=1 → MTD (RxOnWhenIdle=true)
+ot-ctl child table
+cat /tmp/otbr-agent-rest-api
 ```
 
-### Key Bug Fixes
+Interpretation:
 
-1. **Device Re-discovery Bug** (Critical)
-   - Fixed: Devices returning online were not being re-registered
-   - Cause: `discovered_addresses` set was never cleared after device went offline
-   - Solution: Added `forget_device()` method called when polling stops after max failures
+- empty `child table` on OTBR does not prove the device is absent from the mesh
+- the device may be attached under another router
+- `/tmp/otbr-agent-rest-api` is the runtime OTBR web bind, not a public constant
 
-2. **LED State Not Showing** (Critical)
-   - Fixed: LED state showing "unknown" in HA UI
-   - Cause: Multiple issues - wrong MQTT schema, wrong JSON format parsing, no state retention
-   - Solution: Comprehensive fix to MQTT discovery, state extraction, and retention
+### Bridge checks
 
-3. **Command Translation**
-   - Fixed: Commands from HA not being translated correctly to device format
-   - Cause: HA sends "ON"/"OFF" strings, device expects `{"led_id": 0, "state": 1}`
-   - Solution: `_translate_mqtt_to_coap()` now handles both JSON and plain text formats
+Watch for logs that say:
 
-4. **Database Schema Update**
-   - Added `consecutive_failures` and `is_online` columns
-   - Old databases are automatically deleted on first run with new schema
+- `Resolved OTBR web base via Supervisor API: ...`
+- `OTBR web is reachable ... but /api/devices returned HTTP 404`
+- `OTBR inventory returned ... candidate(s)`
+- `Probing seed device via unicast: ...`
+- `Discovered ... interface-derived candidate(s) on wpan0`
 
-### How Device Recovery Works
+## Security Notes
 
-1. **Device goes offline** (moved out of range, powered off)
-2. **Polling fails** 5 times -> device marked "Unavailable" in HA
-3. **Device removed** from `discovered_addresses` set immediately (allows re-discovery)
-4. **Polling continues** for 30 more attempts, then stops
-5. **Device returns** online (rejoins Thread network)
-6. **Unicast re-discovery** probes last-known IPv6 (every 60 seconds)
-7. **Device responds** to unicast GET `/.well-known/core`
-8. **Device re-registered** and polling resumes
-9. **HA shows device** as online again
+- Thread still provides MAC-layer encryption
+- MQTT still uses the configured broker credentials
+- this add-on now requests `hassio_api` access so it can read OTBR add-on metadata from Supervisor
+- Supervisor access is used to resolve OTBR runtime location, not to mutate OTBR state
 
-**Note:** Multicast discovery is unreliable on Thread/wpan0 due to aiocoap limitations. The unicast re-discovery mechanism ensures devices are found reliably after extended disconnection.
+## Matter Hub Note
 
-## Lessons Learned
-
-### Home Assistant `state_class` Philosophy
-
-Home Assistant's statistics engine is designed for time-series data. Understanding `state_class` behavior is important for MQTT sensor integration:
-
-```yaml
-# For frequently changing sensors (temperature, power):
-state_class: measurement
-
-# For always-increasing values (energy, uptime):
-state_class: total_increasing
-
-# For slow-changing sensors (battery %, voltage):
-# Omit state_class entirely - HA may otherwise skip "duplicate" values
-device_class: battery  # Only this, no state_class
-```
-
-**Key observations:**
-- Battery % may stay at "88%" for hours
-- Voltage may stay at "4.08V" for hours
-- HA's statistics engine may optimize away "unchanged" values
-- This is part of HA's design philosophy for long-term statistics
-
-**Voltage decimal places:**
-- `device_class: voltage` forces HA to display integers (4V instead of 4.08V)
-- Omit `device_class` for voltage to preserve decimal formatting
-
-### MQTT Discovery for Lights
-
-Home Assistant MQTT lights support multiple schemas. For simple ON/OFF lights:
-- **Don't use JSON schema** unless you want to publish `{"state": "ON"}`
-- Use **basic schema** with `state_value_template` to convert device values
-- Always set `retain=True` for state topics
-
-### Device Response Formats
-
-CoAP devices may return complex nested JSON. Always log the actual response format:
-```python
-logger.info(f"publish_state called: device={device_id}, uri={resource_uri}, value={state_value}")
-```
-
-### Optimistic Updates
-
-For responsive UI, publish the expected state immediately when a command is sent, then verify with the next poll. This prevents the "springback" effect where the UI briefly shows the old state.
-
-### State Extraction
-
-Handle multiple response formats for robustness:
-```python
-# Format 1: {"leds": [{"led_id": 0, "state": 1}]}
-# Format 2: {"state": 1}
-# Format 3: "1"
-```
+`RiDDiX/home-assistant-matter-hub` is relevant as a future integration layer after this bridge works, because it can expose Home Assistant entities outward over Matter. It does not replace Thread-child discovery into HA or the CoAP normalization work in this add-on.
 
 ## Development
 
-### Local Testing
+### Local Build
 
 ```bash
-# Clone the repository
 git clone https://github.com/censay/thread-coap-bridge-addon.git
 cd thread-coap-bridge-addon
-
-# Build locally
 docker build -t thread-coap-bridge .
-
-# Run for testing (requires OTBR and Mosquitto running)
-docker run --rm \
-  --network host \
-  --privileged \
-  -v $(pwd)/test-data:/data \
-  thread-coap-bridge
 ```
 
-### Testing Python Code Directly
+### Python Verification
 
 ```bash
-cd rootfs/app
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r ../../requirements.txt
-
-# Create test configuration
-mkdir -p /tmp/addon-data
-cat > /tmp/addon-data/options.json << EOF
-{
-  "mqtt_host": "localhost",
-  "mqtt_port": 1883,
-  "mqtt_user": "test",
-  "mqtt_password": "test",
-  "discovery_interval": 60,
-  "log_level": "debug",
-  "thread_interface": "wpan0",
-  "multicast_address": "ff03::fd"
-}
-EOF
-
-# Run the service
-python3 main.py
+cd thread-coap-bridge/rootfs/app
+python -m compileall .
 ```
-
-### Installing in Home Assistant
-
-#### Method 1: Local Development
-
-1. SSH into Home Assistant host
-2. Create directory: `mkdir -p /addons/thread-coap-bridge`
-3. Copy files to this directory
-4. In HA: Settings → Add-ons → Add-on Store → ⋮ → Repositories
-5. Add local path: `/addons`
-6. Install from Local Add-ons section
-
-#### Method 2: GitHub Repository
-
-1. Push code to GitHub
-2. In HA: Settings → Add-ons → Add-on Store → ⋮ → Repositories  
-3. Add: `https://github.com/censay/thread-coap-bridge-addon`
-4. Install from repository
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Home Assistant Container                             │
-│  ├── Core (Python)                                   │
-│  ├── Supervisor                                      │
-│  │   ├── OTBR Add-on (Thread Border Router)         │
-│  │   ├── Mosquitto Add-on (MQTT Broker)             │
-│  │   └── CoAP Bridge Add-on (This)                  │
-│  │       ├── CoAP Discovery (multicast ff03::fd)    │
-│  │       ├── CoAP Client (Observe)                  │
-│  │       ├── Device Registry (SQLite)               │
-│  │       └── MQTT Publisher (Discovery)             │
-└─────────────────────────────────────────────────────┘
-                      ▲
-                      │ Thread Mesh (802.15.4)
-                      │
-        ┌─────────────┼─────────────┐
-        │             │             │
-   ┌────▼───┐   ┌────▼───┐   ┌────▼───┐
-   │ nRF54L15│   │ nRF54L15│   │ nRF54L15│
-   │ CoAP    │   │ CoAP    │   │ CoAP    │
-   │ Server  │   │ Server  │   │ Server  │
-   └─────────┘   └─────────┘   └─────────┘
-```
-
-## Code Structure
-
-```
-rootfs/app/
-├── main.py              # Entry point, orchestration, discovery loop
-├── config_handler.py    # Parse HA add-on configuration
-├── coap_discovery.py    # Multicast + unicast discovery, parse /.well-known/core
-├── coap_client.py       # CoAP GET/PUT/Observe operations, failure tracking
-├── mqtt_publisher.py    # MQTT Discovery, state publishing
-├── device_registry.py   # SQLite database for device management
-└── resource_handlers.py # Resource-to-entity mapping and monitor behavior
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test locally
-5. Submit a pull request
 
 ## License
 
-MIT License - see LICENSE file
-
-## Credits
-
-Built with:
-- [aiocoap](https://github.com/chrysn/aiocoap) - Python CoAP library
-- [paho-mqtt](https://www.eclipse.org/paho/) - MQTT client library
-- [OpenThread](https://openthread.io/) - Thread networking stack
-- [Home Assistant](https://www.home-assistant.io/) - Home automation platform
+MIT License

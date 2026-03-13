@@ -31,7 +31,7 @@ class ConfigHandler:
                 'log_level': 'info',
                 'thread_interface': 'wpan0',
                 'multicast_address': 'ff03::fd',
-                'otbr_rest_url': 'http://127.0.0.1:8081/api',
+                'otbr_rest_url': '',
             }
 
         # MQTT credentials come from environment variables (set by service script from Supervisor)
@@ -61,7 +61,7 @@ class ConfigHandler:
         config.setdefault('mqtt_port', 1883)
         config.setdefault('mqtt_user', '')
         config.setdefault('mqtt_password', '')
-        config.setdefault('otbr_rest_url', 'http://127.0.0.1:8081/api')
+        config.setdefault('otbr_rest_url', '')
         config['seed_ipv6_addresses'] = self._normalize_seed_ipv6_addresses(
             config.get('seed_ipv6_addresses', [])
         )

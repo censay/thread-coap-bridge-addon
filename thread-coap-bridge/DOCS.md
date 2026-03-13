@@ -1,234 +1,141 @@
-# Thread CoAP Bridge
+# Thread CoAP Bridge Docs - v0.6.4
 
-Automatically discover and integrate CoAP-enabled Thread devices into Home Assistant.
+## Purpose
 
-## What This Add-on Does
+This document is the operational companion to `README.md`. It keeps the discovery and troubleshooting path aligned with what has actually been proven on HAOS + OTBR.
 
-This add-on bridges CoAP devices on your Thread network to Home Assistant using MQTT Discovery. It:
+## Discovery Model
 
-- Automatically discovers Thread devices via CoAP multicast
-- Reconciles capability changes from `/.well-known/core` automatically
-- Monitors device state in real-time using CoAP Observe
-- Creates Home Assistant entities automatically (lights, sensors, switches)
-- Handles bidirectional control (HA → Device and Device → HA)
+The bridge now uses a layered model:
 
-## What's New in 0.6.0
+1. OTBR inventory when the installed OTBR build exposes it
+2. Seed IPv6 bootstrap for explicitly supplied devices
+3. Interface-derived IPv6 candidates from `wpan0`
+4. Multicast CoAP discovery
+5. Unicast re-discovery for devices already known to the registry
 
-- The maintained repository URL is `https://github.com/censay/thread-coap-bridge-addon`
-- Device capabilities are reconciled automatically when resources are added or removed during firmware development
-- `/auth` is exposed as a bridge-managed `auth_tier` sensor plus an `auth_request` button
-- Removed resources now clean up retained Home Assistant discovery automatically
+This is deliberate:
 
-## Prerequisites
+- OTBR inventory is the cleanest source when available
+- seeds preserve first-contact recovery when multicast is unreliable
+- interface heuristics and multicast remain fallback paths
+- registry-based re-discovery preserves returning devices
 
-Before installing this add-on, you need:
+## Sources Of Truth
 
-1. **OpenThread Border Router (OTBR)** add-on installed and running
-2. **Mosquitto broker** add-on installed and running  
-3. At least one Thread device with CoAP server (e.g., nRF54L15 with Zephyr firmware)
+### Firmware
 
-## Installation
+- `C:\myfw\dot-kit\README.md`
+- `C:\myfw\dot-kit\prj_uart.conf`
 
-1. Navigate to **Settings** → **Add-ons** → **Add-on Store**
-2. Click the menu (⋮) → **Repositories**
-3. Add this repository URL: `https://github.com/censay/thread-coap-bridge-addon`
-4. Find "Thread CoAP Bridge" in the list
-5. Click **Install**
+Key fact:
 
-## Configuration
+- the UART/debug build uses manual Thread start, so attach state after reset must be established with the documented Method 2 shell flow
 
-### Basic Configuration
+### Device shell
 
-```yaml
-mqtt_host: core-mosquitto
-mqtt_port: 1883
-mqtt_user: homeassistant
-mqtt_password: your_secure_password
-discovery_interval: 60
-log_level: info
-thread_interface: wpan0
-multicast_address: ff03::fd
-seed_ipv6_addresses:
-  - "fd00::1234"
-```
+- `ot state`
+- `ot ipaddr`
+- `ot ping <target> 16 3`
 
-### Configuration Options
+### OTBR
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `mqtt_host` | Hostname of MQTT broker | `core-mosquitto` |
-| `mqtt_port` | MQTT broker port | `1883` |
-| `mqtt_user` | MQTT username | `homeassistant` |
-| `mqtt_password` | MQTT password | (empty) |
-| `discovery_interval` | How often to scan for new devices (seconds) | `60` |
-| `log_level` | Logging verbosity: debug, info, warning, error | `info` |
-| `thread_interface` | Thread network interface name | `wpan0` |
-| `multicast_address` | CoAP multicast address for discovery | `ff03::fd` |
-| `seed_ipv6_addresses` | Optional known device IPv6 addresses for unicast bootstrap | `[]` |
+- `ot-ctl neighbor table`
+- `ot-ctl child table`
+- `/tmp/otbr-agent-rest-api`
+- actual HTTP status codes from the OTBR web bind
 
-## How It Works
+### Bridge
 
-1. **Seed Bootstrap**: Optionally probes configured IPv6 seed addresses via unicast
-2. **Discovery**: Periodically multicasts CoAP requests to find devices
-3. **Resource Query**: Queries each device's `/.well-known/core` endpoint
-4. **MQTT Publishing**: Creates Home Assistant entities via MQTT Discovery
-5. **Observation**: Subscribes to device updates using CoAP Observe
-6. **Control**: Translates HA commands to CoAP PUT requests
+- add-on logs
+- `devices.db`
+- MQTT state under `thread/...`
 
-## Device Requirements
+## OTBR Notes
 
-Your Thread/CoAP devices must implement:
+The bridge no longer assumes these are valid:
 
-- CoAP server listening on port 5683
-- `/.well-known/core` endpoint for resource discovery
-- Resources with CoRE Link Format attributes:
-  - `rt` (resource type): e.g., "light", "sensor", "battery"
-  - `if` (interface): e.g., "actuator", "sensor"  
-  - `obs` flag for observable resources
+- `http://127.0.0.1:8081/api`
+- `http://localhost:8081/api`
+- `http://core-openthread-border-router:8081/api`
 
-Example resource advertisement:
-```
-</led>;rt="light";if="actuator";obs,
-</switch>;rt="button";if="sensor";obs,
-</battery>;rt="sensor";if="battery";obs
-```
+Those were stale guesses.
 
-## Supported Device Types
+The current logic is:
 
-The bridge automatically maps CoAP resources to Home Assistant entities:
+- if `otbr_rest_url` is set, use it as a direct override
+- otherwise, query Supervisor for the installed OTBR add-on
+- extract its runtime add-on IP or hostname
+- probe `http://<resolved-bind>:8081/api/devices`
 
-| Resource Type | HA Entity Type | Features |
-|--------------|----------------|----------|
-| `light` / `led` | Light | On/Off control, real-time state |
-| `switch` | Switch | On/Off control, real-time state |
-| `button` | Binary Sensor | Button press detection |
-| `battery` | Sensor | Battery percentage monitoring |
-| `temperature` | Sensor | Temperature readings |
-| `humidity` | Sensor | Humidity readings |
+If that inventory endpoint returns `404`, the bridge logs the OTBR web surface and disables OTBR inventory for that process run instead of retrying a stale path forever.
 
-The `auth` resource is exposed as:
+## Why This Matters
 
-- `auth_tier` sensor
-- `auth_request` button
+On the validated HAOS system used for this path:
 
-## MQTT Contract for Other Backends
+- the device could join Thread and ping OTBR
+- the OTBR web bind existed
+- `/api/devices` returned `404`
 
-Use the bridge-published `thread/...` topics as the stable backend-facing interface:
+That means these are different failure classes:
+
+- mesh is down
+- device is detached
+- OTBR web is unreachable
+- OTBR web exists but does not expose inventory
+
+The bridge now keeps those classes separate in code and logs.
+
+## Runtime Expectations
+
+### Minimum success case
+
+One visible device with:
+
+- availability
+- `/uptime`
+
+### Bonus success case
+
+All exposed resources from `/.well-known/core` reconciled into HA and MQTT.
+
+## MQTT Contract
+
+Consumers outside Home Assistant should use:
 
 - `thread/{device_id}/availability`
 - `thread/{device_id}/{resource}/state`
 - `thread/{device_id}/{resource}/availability`
 - `thread/{device_id}/auth_tier/state`
 
-Home Assistant discovery topics under `homeassistant/...` are for HA entity registration only.
+## Matter Hub Reference
 
-## Troubleshooting
+`RiDDiX/home-assistant-matter-hub` is relevant after normalization, not before.
 
-### Devices Not Discovered
+Use it when:
 
-**Check Thread network is operational:**
-```bash
-ot-ctl state
-# Should show: leader, router, or child
-```
+- the bridge has already turned Thread/CoAP devices into HA entities
+- you want those HA entities exposed outward over Matter
 
-**Verify device has IPv6 address:**
-```bash
-ot-ctl ipaddr
-```
+Do not use it as a substitute for OTBR discovery or CoAP inventory.
 
-**Test manual CoAP request:**
-```bash
-aiocoap-client -m GET coap://[device-ipv6]/.well-known/core
-```
+## Cleanup Rules Applied In v0.6.4
 
-**Bootstrap a known device when multicast discovery fails:**
-```yaml
-seed_ipv6_addresses:
-  - "fd00::1234"
-```
+- removed guessed OTBR default endpoints from code
+- stopped documenting `/api/devices` as if it were universally available
+- preserved seed bootstrap and offline re-discovery as useful fallback behavior
+- kept `/auth`, capability reconciliation, and SED support
+- updated version references across config and docs
 
-**Check add-on logs:**
-- Click on the add-on
-- Go to the **Log** tab
-- Look for discovery attempts and errors
+## Next Approval Gate
 
-### MQTT Connection Failed
+After this cleanup lands, the next live test should be:
 
-1. Ensure Mosquitto broker add-on is running
-2. Verify credentials in add-on configuration
-3. Check Mosquitto logs for authentication errors
-4. Try connecting with MQTT Explorer to verify broker works
-
-### Entities Not Appearing in Home Assistant
-
-1. Verify MQTT Discovery is enabled:
-   - **Settings** → **Devices & Services** → **MQTT**
-   - Check "Enable discovery" is ON
-2. Use MQTT Explorer to check topics under `homeassistant/`
-3. Check Home Assistant logs for MQTT processing errors
-4. Restart Home Assistant core
-
-### Device Appears Offline
-
-1. Check device is still joined to Thread network
-2. Verify device is responding to ping: `ping6 [device-ipv6]`
-3. Check if device went to sleep without proper keepalive
-4. Look at bridge logs for connection errors
-
-## Advanced Topics
-
-### Custom Device Naming
-
-Devices are automatically named using their EUI-64. To customize:
-
-1. Wait for device to appear in HA
-2. Go to **Settings** → **Devices & Services**
-3. Find the device and click on it
-4. Click the gear icon and rename
-
-### Battery Life Optimization
-
-For battery-powered devices:
-
-- Configure as Sleepy End Device (SED) in firmware
-- Set longer `discovery_interval` (e.g., 300 seconds)
-- Use CoAP Observe for state updates instead of polling
-- Implement proper sleep modes between transmissions
-
-### Network Monitoring
-
-Enable debug logging to see all CoAP traffic:
-
-```yaml
-log_level: debug
-```
-
-This shows:
-- Multicast discovery attempts
-- Device responses
-- Resource queries
-- Observe notifications
-- MQTT publishing events
-
-## Security Considerations
-
-- **Thread Network**: All traffic is encrypted at the MAC layer with AES-128
-- **MQTT**: Uses authentication (username/password)
-- **CoAP**: Currently unencrypted application layer (DTLS support planned)
-
-For enhanced security:
-1. Use strong MQTT passwords
-2. Keep Thread network key secure
-3. Regularly update device firmware
-4. Monitor logs for unusual activity
-
-## Support & Issues
-
-- **Documentation**: See README.md in repository
-- **Issues**: https://github.com/censay/thread-coap-bridge-addon/issues
-- **Discussions**: https://github.com/censay/thread-coap-bridge-addon/discussions
-
-## License
-
-MIT License - see LICENSE file in repository
+1. install the add-on version built from this tree
+2. keep the chip attached as `child`
+3. confirm whether bridge logs show:
+   - Supervisor OTBR resolution
+   - OTBR inventory unsupported or supported
+   - fallback discovery progressing
+4. stop only after either `/uptime` appears or the next single blocker is isolated

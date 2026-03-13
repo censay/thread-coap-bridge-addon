@@ -1,21 +1,31 @@
 """
 CoAP Discovery Module
 
-Handles seed-based unicast bootstrap, multicast discovery,
-and parsing of /.well-known/core responses.
+Handles OTBR-assisted discovery, seed-based unicast bootstrap,
+multicast discovery, and parsing of /.well-known/core responses.
 """
 
 import asyncio
 import ipaddress
 import json
 import logging
+import os
 import re
 from asyncio.subprocess import PIPE
+from dataclasses import dataclass
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 from aiocoap import Context, Message, GET, NON
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class HttpResponse:
+    status: int
+    body: str
+    json_data: object | None
 
 
 class CoAPDiscovery:
@@ -24,28 +34,34 @@ class CoAPDiscovery:
     WELL_KNOWN_CORE = "/.well-known/core"
     DISCOVERY_TIMEOUT = 5.0
     COMMAND_TIMEOUT = 3.0
-    OTBR_HTTP_TIMEOUT = 5.0
-    OTBR_ACTION_POLL_INTERVAL = 1.0
-    OTBR_ACTION_MAX_WAIT = 20.0
+    HTTP_TIMEOUT = 5.0
+    SUPERVISOR_URL = "http://supervisor"
+    OTBR_INVENTORY_PATH = "/api/devices"
+    OTBR_DIAGNOSTIC_PATHS = ("/", "/get_properties", "/api/node", "/node")
     MULTICAST_GROUPS = ['ff03::fd', 'ff03::1']
 
     def __init__(self, device_registry, config):
         self.registry = device_registry
         self.multicast_address = config.get('multicast_address', 'ff03::fd')
         self.thread_interface = config.get('thread_interface', 'wpan0')
-        self.otbr_rest_urls = self._build_otbr_rest_urls(config.get('otbr_rest_url'))
+        self.otbr_base_url_override = self._normalize_otbr_base_url(
+            config.get('otbr_rest_url')
+        )
         self.seed_addresses = self._normalize_seed_addresses(
             config.get('seed_ipv6_addresses', [])
         )
+        self.supervisor_token = os.getenv('SUPERVISOR_TOKEN')
         self.context = None
         self.cycle_addresses = set()
+        self.otbr_base_url = None
+        self.otbr_inventory_supported = None
+        self._logged_events = set()
 
         logger.info(f"CoAP Discovery initialized (trying groups: {', '.join(self.MULTICAST_GROUPS)})")
-        if self.otbr_rest_urls:
-            logger.info(
-                "OTBR REST discovery enabled via %s",
-                ", ".join(self.otbr_rest_urls),
-            )
+        if self.otbr_base_url_override:
+            logger.info("OTBR web override configured: %s", self.otbr_base_url_override)
+        elif self.supervisor_token:
+            logger.info("OTBR discovery will resolve the border router via Supervisor API")
         if self.seed_addresses:
             logger.info(
                 "Configured %d seed IPv6 address(es) for unicast bootstrap",
@@ -134,40 +150,31 @@ class CoAPDiscovery:
         return results
 
     async def discover_otbr_devices(self):
-        """Use OTBR REST inventory as the primary source of attached Thread devices."""
+        """Use OTBR inventory when the installed HA OTBR build exposes it."""
         if not self.context:
             logger.error("CoAP context not initialized")
             return []
 
-        if not self.otbr_rest_urls:
+        if self.otbr_inventory_supported is False:
             return []
 
-        candidates = []
-        reachable_urls = []
-
-        for base_url in self.otbr_rest_urls:
-            devices = await self._fetch_otbr_devices(base_url)
-            if devices is None:
-                continue
-
-            reachable_urls.append(base_url)
-            candidates.extend(self._extract_otbr_candidates(devices))
-
-        if not reachable_urls:
-            logger.warning(
-                "OTBR REST not reachable via %s",
-                ", ".join(self.otbr_rest_urls),
-            )
+        base_url = await self._resolve_otbr_base_url()
+        if not base_url:
             return []
 
+        devices = await self._fetch_otbr_devices(base_url)
+        if devices is None:
+            return []
+
+        candidates = self._extract_otbr_candidates(devices)
         if not candidates:
             logger.info(
-                "No OTBR REST device candidates available from %s",
-                ", ".join(reachable_urls),
+                "No OTBR inventory device candidates available from %s",
+                base_url,
             )
             return []
 
-        logger.info("OTBR REST returned %d candidate(s)", len(candidates))
+        logger.info("OTBR inventory returned %d candidate(s)", len(candidates))
 
         results = []
         for candidate in candidates:
@@ -353,107 +360,202 @@ class CoAPDiscovery:
             logger.info("CoAP discovery context shut down")
 
     async def _fetch_otbr_devices(self, base_url):
-        action_id = await self._trigger_otbr_device_refresh(base_url)
-        if action_id:
-            await self._wait_for_otbr_action(base_url, action_id)
-
-        response = await self._otbr_request_json(
+        response = await self._http_request(
             'GET',
-            f'{base_url}/devices',
-            headers={'Accept': 'application/vnd.api+json'},
+            f'{base_url}{self.OTBR_INVENTORY_PATH}',
+            headers={'Accept': 'application/json, application/vnd.api+json'},
         )
-        if not response:
+        if response is None:
+            self._log_once(
+                f'otbr-unreachable:{base_url}',
+                logging.WARNING,
+                "OTBR web not reachable at %s",
+                base_url,
+            )
             return None
 
-        data = response.get('data')
-        if isinstance(data, list):
-            return data
+        if response.status == 404:
+            self.otbr_inventory_supported = False
+            logger.warning(
+                "OTBR web is reachable at %s but %s returned HTTP 404; disabling OTBR inventory discovery for this run",
+                base_url,
+                self.OTBR_INVENTORY_PATH,
+            )
+            await self._probe_otbr_surface(base_url)
+            return []
 
-        if isinstance(response, list):
-            return response
+        if response.status >= 400:
+            logger.warning(
+                "OTBR inventory request returned HTTP %s from %s%s",
+                response.status,
+                base_url,
+                self.OTBR_INVENTORY_PATH,
+            )
+            return None
 
+        self.otbr_inventory_supported = True
+        payload = self._unwrap_data(response.json_data)
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            if isinstance(payload.get('devices'), list):
+                return payload['devices']
+            if isinstance(payload.get('items'), list):
+                return payload['items']
+
+        logger.debug(
+            "OTBR inventory payload shape was not recognized from %s%s: %s",
+            base_url,
+            self.OTBR_INVENTORY_PATH,
+            response.body,
+        )
         return []
 
-    async def _trigger_otbr_device_refresh(self, base_url):
-        payload = {
-            'data': [
-                {
-                    'type': 'updateDeviceCollectionTask',
-                    'attributes': {
-                        'maxAge': 30,
-                        'maxRetries': 3,
-                        'deviceCount': 50,
-                        'timeout': 15,
-                    },
-                }
-            ]
-        }
+    async def _resolve_otbr_base_url(self):
+        if self.otbr_base_url_override:
+            return self.otbr_base_url_override
 
-        response = await self._otbr_request_json(
-            'POST',
-            f'{base_url}/actions',
+        if self.otbr_base_url:
+            return self.otbr_base_url
+
+        if not self.supervisor_token:
+            self._log_once(
+                'otbr-supervisor-token-missing',
+                logging.INFO,
+                "Supervisor API token not available; OTBR auto-resolution is disabled",
+            )
+            return None
+
+        addon_slug = await self._find_otbr_addon_slug()
+        if not addon_slug:
+            self._log_once(
+                'otbr-addon-missing',
+                logging.WARNING,
+                "OpenThread Border Router add-on was not found via Supervisor API",
+            )
+            return None
+
+        response = await self._supervisor_request(
+            'GET',
+            f'/addons/{urllib_parse.quote(addon_slug, safe="")}/info',
+        )
+        if response is None:
+            self._log_once(
+                f'otbr-addon-info-unreachable:{addon_slug}',
+                logging.WARNING,
+                "Supervisor API could not load OTBR add-on info for %s",
+                addon_slug,
+            )
+            return None
+
+        if response.status >= 400:
+            self._log_once(
+                f'otbr-addon-info-http:{addon_slug}:{response.status}',
+                logging.WARNING,
+                "Supervisor API returned HTTP %s for OTBR add-on info (%s)",
+                response.status,
+                addon_slug,
+            )
+            return None
+
+        info = self._unwrap_data(response.json_data)
+        base_url = self._extract_otbr_base_url(info)
+        if not base_url:
+            self._log_once(
+                f'otbr-addon-info-missing-url:{addon_slug}',
+                logging.WARNING,
+                "Supervisor API returned OTBR add-on info without a reachable web bind for %s",
+                addon_slug,
+            )
+            return None
+
+        self.otbr_base_url = base_url
+        logger.info("Resolved OTBR web base via Supervisor API: %s", base_url)
+        return base_url
+
+    async def _find_otbr_addon_slug(self):
+        response = await self._supervisor_request('GET', '/addons')
+        if response is None:
+            self._log_once(
+                'supervisor-addons-unreachable',
+                logging.WARNING,
+                "Supervisor API could not list installed add-ons",
+            )
+            return None
+
+        if response.status >= 400:
+            self._log_once(
+                f'supervisor-addons-http:{response.status}',
+                logging.WARNING,
+                "Supervisor API returned HTTP %s while listing add-ons",
+                response.status,
+            )
+            return None
+
+        data = self._unwrap_data(response.json_data)
+        if isinstance(data, dict):
+            addons = data.get('addons', [])
+        elif isinstance(data, list):
+            addons = data
+        else:
+            addons = []
+
+        preferred = []
+        fallback = []
+        for addon in addons:
+            slug = addon.get('slug')
+            name = (addon.get('name') or '').lower()
+            if not slug:
+                continue
+            if slug == 'core_openthread_border_router':
+                preferred.append(slug)
+            elif slug.endswith('openthread_border_router') or name == 'openthread border router':
+                fallback.append(slug)
+
+        candidates = preferred or fallback
+        return candidates[0] if candidates else None
+
+    async def _probe_otbr_surface(self, base_url):
+        statuses = []
+        for path in self.OTBR_DIAGNOSTIC_PATHS:
+            response = await self._http_request(
+                'GET',
+                f'{base_url}{path}',
+                headers={'Accept': 'application/json, text/plain, */*'},
+            )
+            if response is None:
+                statuses.append(f'{path}=unreachable')
+            else:
+                statuses.append(f'{path}={response.status}')
+
+        logger.info(
+            "OTBR web surface at %s responded with %s",
+            base_url,
+            ", ".join(statuses),
+        )
+
+    async def _supervisor_request(self, method, path, payload=None):
+        return await self._http_request(
+            method,
+            f'{self.SUPERVISOR_URL}{path}',
             headers={
-                'Accept': 'application/vnd.api+json',
-                'Content-Type': 'application/vnd.api+json',
+                'Authorization': f'Bearer {self.supervisor_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
             },
             payload=payload,
         )
-        if not response:
-            return None
 
-        data = response.get('data')
-        if isinstance(data, list) and data:
-            action = data[0]
-        elif isinstance(data, dict):
-            action = data
-        else:
-            logger.debug("Unexpected OTBR action response: %s", response)
-            return None
-
-        action_id = action.get('id')
-        if action_id:
-            logger.debug("Started OTBR device refresh action %s", action_id)
-        return action_id
-
-    async def _wait_for_otbr_action(self, base_url, action_id):
-        deadline = asyncio.get_running_loop().time() + self.OTBR_ACTION_MAX_WAIT
-
-        while asyncio.get_running_loop().time() < deadline:
-            response = await self._otbr_request_json(
-                'GET',
-                f'{base_url}/actions/{action_id}',
-                headers={'Accept': 'application/vnd.api+json'},
-            )
-            if not response:
-                return
-
-            data = response.get('data')
-            if isinstance(data, list):
-                data = data[0] if data else {}
-
-            status = ((data or {}).get('attributes') or {}).get('status')
-            if status == 'completed':
-                logger.debug("OTBR device refresh action %s completed", action_id)
-                return
-
-            if status in {'failed', 'stopped'}:
-                logger.warning("OTBR device refresh action %s ended with status=%s", action_id, status)
-                return
-
-            await asyncio.sleep(self.OTBR_ACTION_POLL_INTERVAL)
-
-        logger.warning("Timed out waiting for OTBR action %s", action_id)
-
-    async def _otbr_request_json(self, method, url, headers=None, payload=None):
+    async def _http_request(self, method, url, headers=None, payload=None):
         return await asyncio.to_thread(
-            self._otbr_request_json_sync,
+            self._http_request_sync,
             method,
             url,
             headers or {},
             payload,
         )
 
-    def _otbr_request_json_sync(self, method, url, headers, payload):
+    def _http_request_sync(self, method, url, headers, payload):
         data = None
         request_headers = dict(headers)
         if payload is not None:
@@ -468,24 +570,55 @@ class CoAPDiscovery:
         )
 
         try:
-            with urllib_request.urlopen(request, timeout=self.OTBR_HTTP_TIMEOUT) as response:
-                body = response.read().decode('utf-8')
+            with urllib_request.urlopen(request, timeout=self.HTTP_TIMEOUT) as response:
+                body = response.read().decode('utf-8', errors='ignore')
+                status = response.getcode()
         except urllib_error.HTTPError as exc:
             body = exc.read().decode('utf-8', errors='ignore')
-            logger.debug("OTBR HTTP %s for %s: %s", exc.code, url, body)
-            return None
+            return HttpResponse(exc.code, body, self._decode_json_body(body))
         except urllib_error.URLError as exc:
-            logger.debug("OTBR request failed for %s: %s", url, exc)
+            logger.debug("HTTP request failed for %s: %s", url, exc)
             return None
         except Exception as exc:
-            logger.debug("Unexpected OTBR request failure for %s: %s", url, exc)
+            logger.debug("Unexpected HTTP request failure for %s: %s", url, exc)
+            return None
+
+        return HttpResponse(status, body, self._decode_json_body(body))
+
+    def _decode_json_body(self, body):
+        if not body:
             return None
 
         try:
             return json.loads(body)
         except json.JSONDecodeError:
-            logger.debug("Invalid OTBR JSON from %s: %s", url, body)
             return None
+
+    def _unwrap_data(self, payload):
+        if isinstance(payload, dict) and 'data' in payload:
+            return payload['data']
+        return payload
+
+    def _extract_otbr_base_url(self, info):
+        if not isinstance(info, dict):
+            return None
+
+        ip_address = info.get('ip_address')
+        if ip_address:
+            return self._normalize_otbr_base_url(f'http://{ip_address}:8081')
+
+        hostname = info.get('hostname')
+        if hostname:
+            return self._normalize_otbr_base_url(f'http://{hostname}:8081')
+
+        return None
+
+    def _log_once(self, key, level, message, *args):
+        if key in self._logged_events:
+            return
+
+        self._logged_events.add(key)
+        logger.log(level, message, *args)
 
     def _extract_otbr_candidates(self, devices):
         candidates = []
@@ -679,28 +812,7 @@ class CoAPDiscovery:
 
         return addr.compressed
 
-    def _build_otbr_rest_urls(self, value):
-        defaults = [
-            value,
-            'http://127.0.0.1:8081/api',
-            'http://localhost:8081/api',
-            'http://core-openthread-border-router:8081/api',
-        ]
-
-        urls = []
-        seen = set()
-
-        for candidate in defaults:
-            normalized = self._normalize_otbr_rest_url(candidate)
-            if not normalized or normalized in seen:
-                continue
-
-            seen.add(normalized)
-            urls.append(normalized)
-
-        return urls
-
-    def _normalize_otbr_rest_url(self, value):
+    def _normalize_otbr_base_url(self, value):
         if value is None:
             return None
 
@@ -708,7 +820,11 @@ class CoAPDiscovery:
         if not candidate:
             return None
 
-        return candidate.rstrip('/')
+        candidate = candidate.rstrip('/')
+        if candidate.endswith('/api'):
+            candidate = candidate[:-4]
+
+        return candidate
 
     def _normalize_seed_addresses(self, values):
         if values is None:

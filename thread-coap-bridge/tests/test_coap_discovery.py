@@ -1,6 +1,6 @@
 import asyncio
 
-from coap_discovery import CoAPDiscovery
+from coap_discovery import CoAPDiscovery, HttpResponse
 
 
 def run(coro):
@@ -154,7 +154,7 @@ def test_interface_candidates_are_probed_before_multicast():
 
 
 def test_otbr_device_payload_extracts_omr_candidates_and_eui64():
-    discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://core-openthread-border-router:8081/api"})
+    discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://172.30.32.1:8081"})
 
     devices = [
         {
@@ -209,14 +209,93 @@ def test_otbr_device_payload_extracts_omr_candidates_and_eui64():
     ]
 
 
-def test_otbr_rest_url_builder_prefers_local_host_network_endpoints():
-    discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://127.0.0.1:8081/api"})
+def test_otbr_base_url_normalizer_strips_optional_api_suffix():
+    discovery = CoAPDiscovery(None, {})
 
-    assert discovery.otbr_rest_urls == [
-        "http://127.0.0.1:8081/api",
-        "http://localhost:8081/api",
-        "http://core-openthread-border-router:8081/api",
-    ]
+    assert discovery._normalize_otbr_base_url("http://127.0.0.1:8081/api") == "http://127.0.0.1:8081"
+    assert discovery._normalize_otbr_base_url(" http://172.30.32.1:8081/ ") == "http://172.30.32.1:8081"
+    assert discovery._normalize_otbr_base_url("") is None
+
+
+def test_find_otbr_addon_slug_prefers_core_slug():
+    async def scenario():
+        discovery = CoAPDiscovery(None, {})
+        discovery.supervisor_token = "token"
+
+        async def fake_supervisor_request(method, path, payload=None):
+            assert method == "GET"
+            assert path == "/addons"
+            return HttpResponse(
+                200,
+                "",
+                {
+                    "data": {
+                        "addons": [
+                            {"slug": "local_openthread_border_router", "name": "OpenThread Border Router"},
+                            {"slug": "core_openthread_border_router", "name": "OpenThread Border Router"},
+                        ]
+                    }
+                },
+            )
+
+        discovery._supervisor_request = fake_supervisor_request
+
+        assert await discovery._find_otbr_addon_slug() == "core_openthread_border_router"
+
+    run(scenario())
+
+
+def test_resolve_otbr_base_url_uses_supervisor_ip_address():
+    async def scenario():
+        discovery = CoAPDiscovery(None, {})
+        discovery.supervisor_token = "token"
+
+        async def fake_supervisor_request(method, path, payload=None):
+            if path == "/addons":
+                return HttpResponse(
+                    200,
+                    "",
+                    {"data": {"addons": [{"slug": "core_openthread_border_router"}]}},
+                )
+
+            if path == "/addons/core_openthread_border_router/info":
+                return HttpResponse(
+                    200,
+                    "",
+                    {
+                        "data": {
+                            "slug": "core_openthread_border_router",
+                            "ip_address": "172.30.32.1",
+                            "hostname": "core-openthread-border-router",
+                        }
+                    },
+                )
+
+            raise AssertionError(path)
+
+        discovery._supervisor_request = fake_supervisor_request
+
+        assert await discovery._resolve_otbr_base_url() == "http://172.30.32.1:8081"
+
+    run(scenario())
+
+
+def test_otbr_inventory_is_disabled_after_http_404():
+    async def scenario():
+        discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://172.30.32.1:8081"})
+        discovery.context = object()
+
+        async def fake_http_request(method, url, headers=None, payload=None):
+            if url == "http://172.30.32.1:8081/api/devices":
+                return HttpResponse(404, '{"ErrorCode":404}', {"ErrorCode": 404})
+            return HttpResponse(200, "{}", {})
+
+        discovery._http_request = fake_http_request
+
+        assert await discovery.discover_otbr_devices() == []
+        assert discovery.otbr_inventory_supported is False
+
+    run(scenario())
 
 
 def test_otbr_candidates_are_probed_before_interface_and_multicast():
@@ -232,14 +311,16 @@ def test_otbr_candidates_are_probed_before_interface_and_multicast():
         registry = FakeRegistry()
         discovery = CoAPDiscovery(
             registry,
-            {"otbr_rest_url": "http://127.0.0.1:8081/api"},
+            {"otbr_rest_url": "http://172.30.32.1:8081"},
         )
         discovery.context = object()
         discovery.start_cycle()
 
+        async def fake_resolve_base_url():
+            return "http://172.30.32.1:8081"
+
         async def fake_fetch_otbr_devices(base_url):
-            if base_url != "http://127.0.0.1:8081/api":
-                return None
+            assert base_url == "http://172.30.32.1:8081"
             return [
                 {
                     "id": "de62e016db392476",
@@ -256,6 +337,7 @@ def test_otbr_candidates_are_probed_before_interface_and_multicast():
             assert ipv6_addr == "fd35:5807:223f:1:235e:586d:bd3b:4921"
             return [{"uri_path": "/auth", "resource_type": "auth", "observable": False}]
 
+        discovery._resolve_otbr_base_url = fake_resolve_base_url
         discovery._fetch_otbr_devices = fake_fetch_otbr_devices
         discovery.query_device_resources = fake_query
 
