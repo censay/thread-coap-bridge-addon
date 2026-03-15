@@ -250,7 +250,7 @@ class CoAPDiscovery:
 
         return results
 
-    async def query_device_resources(self, ipv6_addr, timeout=65.0):
+    async def query_device_resources(self, ipv6_addr, timeout=15.0):
         logger.debug(f"Querying resources from {ipv6_addr}")
 
         if not self.context:
@@ -259,7 +259,7 @@ class CoAPDiscovery:
 
         try:
             uri = f'coap://[{ipv6_addr}]{self.WELL_KNOWN_CORE}'
-            request = Message(code=GET, uri=uri)
+            request = Message(code=GET, uri=uri, mtype=NON)
             response = await asyncio.wait_for(
                 self.context.request(request).response,
                 timeout=timeout,
@@ -274,7 +274,7 @@ class CoAPDiscovery:
             return []
 
         except asyncio.TimeoutError:
-            logger.warning(f"Query timeout for device {ipv6_addr}")
+            logger.debug(f"Query timeout for device {ipv6_addr}")
             return []
         except Exception as e:
             logger.error(f"Error querying device {ipv6_addr}: {e}")

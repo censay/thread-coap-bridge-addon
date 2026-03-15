@@ -44,6 +44,7 @@ class CoAPBridgeService:
         self.resource_tasks = {}
         self.active_entities = {}
         self.reconcile_requested = set()
+        self.discovery_strategy = None
 
         self.recent_commands = {}
         self.command_suppress_time = 10
@@ -94,9 +95,7 @@ class CoAPBridgeService:
                     exc = task.exception()
                     if exc:
                         logger.error(f"Resource task {task.get_name()} crashed with exception: {exc}")
-                    self.reconcile_requested.add(key[0])
-                elif task.get_name().startswith(("observe_", "poll_")):
-                    self.reconcile_requested.add(key[0])
+                        self.reconcile_requested.add(key[0])
                 del self.resource_tasks[key]
 
         for device_id, task in list(self.auth_expiry_tasks.items()):
@@ -145,7 +144,7 @@ class CoAPBridgeService:
             )
             await self.announce_server.initialize()
 
-            await self._republish_all_discovery()
+            await self._restore_known_devices()
 
             logger.info("Starting background tasks...")
             self._track_background_task(asyncio.create_task(self._discovery_loop(), name="discovery_loop"))
@@ -168,20 +167,26 @@ class CoAPBridgeService:
             logger.exception(f"Fatal error in main loop: {e}")
             sys.exit(1)
 
-    async def _republish_all_discovery(self):
-        logger.info("Re-publishing MQTT discovery for all known devices...")
+    async def _restore_known_devices(self):
+        logger.info("Restoring known devices from registry...")
 
         try:
             all_devices = await self.registry.get_all_devices()
             logger.info(f"Found {len(all_devices)} devices in registry")
 
-            for device in all_devices:
-                await self._reconcile_device(device, mark_commissioned=False)
+            if not all_devices:
+                return
 
-            logger.info(f"Re-published discovery for {len(all_devices)} devices")
+            await self.registry.mark_all_devices_offline()
+            for device in all_devices:
+                self.mqtt.publish_availability(device.device_id, available=False)
+
+            logger.info(
+                "Known devices restored as offline; waiting for announce or offline unicast recovery"
+            )
 
         except Exception as e:
-            logger.error(f"Error re-publishing discovery: {e}")
+            logger.error(f"Error restoring known devices: {e}")
 
     async def _discovery_loop(self):
         interval = self.config.get('discovery_interval', 60)
@@ -191,13 +196,26 @@ class CoAPBridgeService:
             try:
                 results = []
                 self.discovery.start_cycle()
-                results.extend(await self.discovery.discover_seed_devices())
-                results.extend(await self.discovery.discover_devices())
+                known_devices = await self.registry.get_all_devices()
+                if known_devices:
+                    if self.discovery_strategy != "announce_first":
+                        logger.info(
+                            "Known devices exist in registry; skipping OTBR/interface/multicast scans and relying on announce plus offline unicast recovery"
+                        )
+                        self.discovery_strategy = "announce_first"
+                else:
+                    if self.discovery_strategy != "bootstrap":
+                        logger.info(
+                            "Registry is empty; enabling seed, OTBR, interface, and multicast bootstrap discovery"
+                        )
+                        self.discovery_strategy = "bootstrap"
+                    results.extend(await self.discovery.discover_seed_devices())
+                    results.extend(await self.discovery.discover_devices())
                 results.extend(await self.discovery.rediscover_offline_devices(self.registry))
                 if results:
                     logger.info(f"Discovery cycle reconciled {len(results)} device response(s)")
                     for result in results:
-                        if not result.commissioned:
+                        if result.needs_runtime_reconcile:
                             self.reconcile_requested.add(result.device_id)
                 await asyncio.sleep(interval)
             except Exception as e:
@@ -362,11 +380,6 @@ class CoAPBridgeService:
         while self.running:
             try:
                 payload = await self.coap_client.get_resource(ipv6_addr, source_uri)
-                if not payload:
-                    logger.info(f"Retrying {source_uri} after 10s...")
-                    await asyncio.sleep(10)
-                    payload = await self.coap_client.get_resource(ipv6_addr, source_uri)
-
                 if payload:
                     normalized = await self._normalize_polled_state(device_id, resource_type, payload)
                     if normalized is None:
@@ -397,13 +410,22 @@ class CoAPBridgeService:
                 else:
                     consecutive_failures += 1
                     await self.registry.update_device_failure(device_id, failed=True)
-                    logger.warning(
-                        "Poll failed for %s%s (%d/%d failures)",
-                        device_id,
-                        source_uri,
-                        consecutive_failures,
-                        offline_threshold,
-                    )
+                    if self._should_log_failure_count(consecutive_failures, offline_threshold):
+                        logger.warning(
+                            "Poll failed for %s%s (%d/%d failures)",
+                            device_id,
+                            source_uri,
+                            consecutive_failures,
+                            offline_threshold,
+                        )
+                    else:
+                        logger.debug(
+                            "Poll failed for %s%s (%d/%d failures)",
+                            device_id,
+                            source_uri,
+                            consecutive_failures,
+                            offline_threshold,
+                        )
 
                     if consecutive_failures >= offline_threshold and device_is_online:
                         self.mqtt.publish_availability(device_id, available=False)
@@ -470,7 +492,10 @@ class CoAPBridgeService:
         sensor_key = (device_id, state_uri)
         self.sensor_failures[sensor_key] = self.sensor_failures.get(sensor_key, 0) + 1
         failure_count = self.sensor_failures[sensor_key]
-        logger.warning(f"Sensor {state_uri} failure #{failure_count}")
+        if self._should_log_failure_count(failure_count, self.sensor_offline_threshold):
+            logger.warning(f"Sensor {state_uri} failure #{failure_count}")
+        else:
+            logger.debug(f"Sensor {state_uri} failure #{failure_count}")
 
         if failure_count >= self.sensor_offline_threshold:
             if self.sensor_available.get(sensor_key, True):
@@ -482,6 +507,9 @@ class CoAPBridgeService:
                     object_id,
                     failure_count,
                 )
+
+    def _should_log_failure_count(self, failure_count, threshold):
+        return failure_count <= threshold or failure_count % 10 == 0
 
     async def _cleanup_loop(self):
         cleanup_interval = self.config.get('cleanup_check_interval', 3600)

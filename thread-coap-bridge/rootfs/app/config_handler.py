@@ -111,6 +111,9 @@ class ConfigHandler:
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[logging.StreamHandler()]
         )
+
+        # aiocoap's internal retransmission logs are too noisy for the normal add-on view.
+        logging.getLogger('coap').setLevel(logging.DEBUG if level == logging.DEBUG else logging.ERROR)
         
         logger.info(f"Logging level set to: {self.config.get('log_level', 'info')}")
     

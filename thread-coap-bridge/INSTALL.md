@@ -1,4 +1,4 @@
-# Installation Guide - v0.6.6
+# Installation Guide - v0.6.7
 
 ## What You Are Installing
 

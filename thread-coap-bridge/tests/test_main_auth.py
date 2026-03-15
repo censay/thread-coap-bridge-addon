@@ -31,7 +31,7 @@ def test_verify_auth_signature_accepts_raw_r_s_encoding():
     assert service._verify_auth_signature(public_key_hex, nonce, "00" * 64) is False
 
 
-def test_finished_resource_tasks_are_requeued_for_reconcile():
+def test_finished_resource_tasks_do_not_requeue_after_clean_exit():
     async def scenario():
         service = CoAPBridgeService()
 
@@ -48,6 +48,33 @@ def test_finished_resource_tasks_are_requeued_for_reconcile():
 
         service._prune_finished_tasks()
 
+        assert "thread_dev" not in service.reconcile_requested
+        assert service.resource_tasks == {}
+
+    run(scenario())
+
+
+def test_crashed_resource_tasks_are_requeued_for_reconcile():
+    async def scenario():
+        service = CoAPBridgeService()
+
+        async def crashed_poll():
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(crashed_poll(), name="poll_thread_dev_/uptime")
+        try:
+            await task
+        except RuntimeError:
+            pass
+
+        service.resource_tasks[("thread_dev", "/uptime")] = {
+            "task": task,
+            "spec": object(),
+        }
+
+        service._prune_finished_tasks()
+
         assert "thread_dev" in service.reconcile_requested
+        assert service.resource_tasks == {}
 
     run(scenario())

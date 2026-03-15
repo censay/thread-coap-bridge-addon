@@ -1,4 +1,4 @@
-# Thread CoAP Bridge - v0.6.6
+# Thread CoAP Bridge - v0.6.7
 
 Home Assistant add-on for bridging Thread-attached CoAP devices into MQTT Discovery and stable `thread/...` topics.
 
@@ -50,12 +50,18 @@ The bridge still keeps the useful fallback logic from the fork:
 
 Those paths are still useful for resilience and diagnosis, but they are no longer documented as the main discovery contract.
 
+In the current runtime, those fallback scans are primarily bootstrap behavior:
+
+- if the registry is empty, the bridge still uses seed, OTBR, interface, and multicast discovery to find an initial device
+- once the registry already has known devices, the bridge now stays on the quieter announce-first path and relies on device announce plus offline unicast rediscovery instead of repeating OTBR and multicast scans every cycle
+
 ## Preserved Behavior From 0.5.0 Forward
 
 The documentation cleanup does not discard the important forked behavior:
 
 - runtime capability reconciliation from `/.well-known/core`
 - MQTT-first backend contract under `thread/...`
+- quieter announce-first runtime once devices are already known to the registry
 - staggered polling cadence:
   - battery every 120 seconds starting at 0 seconds
   - voltage every 120 seconds starting at 40 seconds

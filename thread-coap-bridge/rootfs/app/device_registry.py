@@ -18,6 +18,7 @@ class RegistrationResult:
     device_id: str
     is_new: bool
     resources_changed: bool
+    needs_runtime_reconcile: bool
     commissioned: bool
 
 
@@ -178,6 +179,7 @@ class DeviceRegistry:
             device_id=device_id,
             is_new=is_new,
             resources_changed=resources_changed,
+            needs_runtime_reconcile=needs_runtime_reconcile,
             commissioned=bool(next_commissioned),
         )
 
@@ -419,6 +421,21 @@ class DeviceRegistry:
                 logger.info(f"Device {device_id} marked as offline in database")
         except Exception as e:
             logger.error(f"Error marking device offline: {e}")
+
+    async def mark_all_devices_offline(self):
+        try:
+            async with self.connection.cursor() as cursor:
+                await cursor.execute('''
+                    UPDATE devices
+                    SET is_online = 0
+                    WHERE is_online != 0
+                ''')
+                updated = cursor.rowcount or 0
+                await self.connection.commit()
+                if updated > 0:
+                    logger.info("Marked %d stored device(s) offline in database", updated)
+        except Exception as e:
+            logger.error(f"Error marking all devices offline: {e}")
 
     async def get_offline_devices(self):
         try:

@@ -1,4 +1,4 @@
-# Thread CoAP Bridge Docs - v0.6.6
+# Thread CoAP Bridge Docs - v0.6.7
 
 ## Purpose
 
@@ -37,6 +37,11 @@ Fallbacks still exist, but they are now clearly secondary:
 6. unicast re-discovery of offline devices already known to the registry
 
 These are helpful for diagnosis and recovery, but they are not the main success path anymore.
+
+Operationally, the bridge now treats those scans as bootstrap tools:
+
+- when the registry is empty, fallback discovery still runs to help find an initial device
+- once devices are already known, the bridge prefers announce-first behavior and offline unicast recovery instead of repeating OTBR and multicast scans every discovery interval
 
 ## Proven Facts On The Validated HAOS Setup
 

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-03-15
+
+### Changed
+- Reduced steady-state bridge noise by restoring stored devices as offline on startup instead of immediately hammering them with runtime work
+- Discovery now treats OTBR, interface, and multicast scans as bootstrap behavior and stays on the quieter announce-first path once devices are already known
+- Read-side CoAP traffic now uses shorter, non-confirmable requests and backs off retry timing instead of repeatedly flooding retransmissions into the log
+- Finished observe and poll tasks only requeue runtime reconciliation when they actually crash
+- Add-on version updated to `0.6.7`
+
+### Fixed
+- Duplicate announces before first commissioning no longer trigger duplicate runtime reconcile and repeated MQTT discovery publish
+
 ## [0.6.6] - 2026-03-15
 
 ### Added

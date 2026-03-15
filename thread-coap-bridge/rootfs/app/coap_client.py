@@ -8,9 +8,14 @@ import asyncio
 import inspect
 import json
 import logging
-from aiocoap import Context, Message, GET, PUT, POST
+from aiocoap import Context, Message, GET, PUT, POST, NON
 
 logger = logging.getLogger(__name__)
+
+READ_TIMEOUT = 15.0
+WRITE_TIMEOUT = 20.0
+OBSERVE_REGISTRATION_TIMEOUT = 20.0
+MAX_RETRY_DELAY = 60.0
 
 
 class CoAPClient:
@@ -47,7 +52,7 @@ class CoAPClient:
         except Exception as exc:
             logger.error("Device status callback failed for %s: %s", device_id, exc)
 
-    async def get_resource(self, ipv6_addr, uri_path, timeout=65.0):
+    async def get_resource(self, ipv6_addr, uri_path, timeout=READ_TIMEOUT):
         logger.debug(f"GET coap://[{ipv6_addr}]{uri_path}")
 
         if not self.context:
@@ -56,7 +61,7 @@ class CoAPClient:
 
         try:
             uri = f'coap://[{ipv6_addr}]{uri_path}'
-            request = Message(code=GET, uri=uri)
+            request = Message(code=GET, uri=uri, mtype=NON)
 
             response = await asyncio.wait_for(
                 self.context.request(request).response,
@@ -78,13 +83,13 @@ class CoAPClient:
             logger.error(f"GET error for {ipv6_addr}{uri_path}: {e}")
             return None
 
-    async def put_resource(self, ipv6_addr, uri_path, payload, timeout=65.0):
+    async def put_resource(self, ipv6_addr, uri_path, payload, timeout=WRITE_TIMEOUT):
         return await self._send_with_payload(PUT, ipv6_addr, uri_path, payload, timeout=timeout)
 
-    async def post_resource(self, ipv6_addr, uri_path, payload, timeout=65.0):
+    async def post_resource(self, ipv6_addr, uri_path, payload, timeout=WRITE_TIMEOUT):
         return await self._send_with_payload(POST, ipv6_addr, uri_path, payload, timeout=timeout)
 
-    async def _send_with_payload(self, method, ipv6_addr, uri_path, payload, timeout=65.0):
+    async def _send_with_payload(self, method, ipv6_addr, uri_path, payload, timeout=WRITE_TIMEOUT):
         logger.debug(f"{method} coap://[{ipv6_addr}]{uri_path} = {payload}")
 
         if not self.context:
@@ -136,9 +141,10 @@ class CoAPClient:
         max_reconnect_attempts = 10
 
         while self.running and consecutive_failures < max_reconnect_attempts:
+            retry_delay = min(MAX_RETRY_DELAY, 10.0 * max(1, consecutive_failures))
             try:
                 uri = f'coap://[{ipv6_addr}]{uri_path}'
-                request = Message(code=GET, uri=uri, observe=0)
+                request = Message(code=GET, uri=uri, observe=0, mtype=NON)
                 observation_request = self.context.request(request)
 
                 self.observations[obs_key] = {
@@ -154,7 +160,7 @@ class CoAPClient:
                 try:
                     initial_response = await asyncio.wait_for(
                         observation_request.response,
-                        timeout=75.0,
+                        timeout=OBSERVE_REGISTRATION_TIMEOUT,
                     )
 
                     if initial_response.code.is_successful():
@@ -180,7 +186,7 @@ class CoAPClient:
                     else:
                         logger.warning(f"Observe registration failed: {initial_response.code}")
                         consecutive_failures += 1
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
                         continue
 
                 except asyncio.TimeoutError:
@@ -195,7 +201,7 @@ class CoAPClient:
                         if registry:
                             await registry.mark_device_offline(device_id)
 
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
                     continue
 
                 try:
@@ -223,7 +229,7 @@ class CoAPClient:
                     logger.warning(f"Observation iteration error for {device_id}{uri_path}: {obs_error}")
 
                 logger.info(f"Observe stream ended for {device_id}{uri_path}, waiting before retry...")
-                await asyncio.sleep(30)
+                await asyncio.sleep(max(30.0, retry_delay))
 
             except asyncio.CancelledError:
                 logger.info(f"Observation cancelled for {device_id}{uri_path}")
@@ -240,7 +246,7 @@ class CoAPClient:
                     if registry:
                         await registry.mark_device_offline(device_id)
 
-                await asyncio.sleep(10)
+                await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
 
         if obs_key in self.observations:
             del self.observations[obs_key]
