@@ -37,6 +37,7 @@ class CoAPDiscovery:
     HTTP_TIMEOUT = 5.0
     SUPERVISOR_URL = "http://supervisor"
     OTBR_INVENTORY_PATH = "/api/devices"
+    OTBR_NODE_PATH = "/node"
     OTBR_DIAGNOSTIC_PATHS = ("/", "/get_properties", "/api/node", "/node")
     OTBR_ADDON_SLUG_CANDIDATES = (
         "core_openthread_border_router",
@@ -154,31 +155,18 @@ class CoAPDiscovery:
         return results
 
     async def discover_otbr_devices(self):
-        """Use OTBR inventory when the installed HA OTBR build exposes it."""
+        """Use OTBR discovery surfaces exposed by the installed HA OTBR build."""
         if not self.context:
             logger.error("CoAP context not initialized")
-            return []
-
-        if self.otbr_inventory_supported is False:
             return []
 
         base_url = await self._resolve_otbr_base_url()
         if not base_url:
             return []
 
-        devices = await self._fetch_otbr_devices(base_url)
-        if devices is None:
-            return []
-
-        candidates = self._extract_otbr_candidates(devices)
+        candidates = await self._fetch_otbr_candidates(base_url)
         if not candidates:
-            logger.info(
-                "No OTBR inventory device candidates available from %s",
-                base_url,
-            )
             return []
-
-        logger.info("OTBR inventory returned %d candidate(s)", len(candidates))
 
         results = []
         for candidate in candidates:
@@ -363,7 +351,10 @@ class CoAPDiscovery:
             await self.context.shutdown()
             logger.info("CoAP discovery context shut down")
 
-    async def _fetch_otbr_devices(self, base_url):
+    async def _fetch_otbr_candidates(self, base_url):
+        if self.otbr_inventory_supported is False:
+            return await self._fetch_otbr_node_candidates(base_url)
+
         response = await self._http_request(
             'GET',
             f'{base_url}{self.OTBR_INVENTORY_PATH}',
@@ -381,12 +372,13 @@ class CoAPDiscovery:
         if response.status == 404:
             self.otbr_inventory_supported = False
             logger.warning(
-                "OTBR web is reachable at %s but %s returned HTTP 404; disabling OTBR inventory discovery for this run",
+                "OTBR web is reachable at %s but %s returned HTTP 404; switching to %s fallback",
                 base_url,
                 self.OTBR_INVENTORY_PATH,
+                self.OTBR_NODE_PATH,
             )
             await self._probe_otbr_surface(base_url)
-            return []
+            return await self._fetch_otbr_node_candidates(base_url)
 
         if response.status >= 400:
             logger.warning(
@@ -400,20 +392,74 @@ class CoAPDiscovery:
         self.otbr_inventory_supported = True
         payload = self._unwrap_data(response.json_data)
         if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
+            candidates = self._extract_otbr_candidates(payload)
+        elif isinstance(payload, dict):
             if isinstance(payload.get('devices'), list):
-                return payload['devices']
-            if isinstance(payload.get('items'), list):
-                return payload['items']
+                candidates = self._extract_otbr_candidates(payload['devices'])
+            elif isinstance(payload.get('items'), list):
+                candidates = self._extract_otbr_candidates(payload['items'])
+            else:
+                logger.debug(
+                    "OTBR inventory payload shape was not recognized from %s%s: %s",
+                    base_url,
+                    self.OTBR_INVENTORY_PATH,
+                    response.body,
+                )
+                return []
+        else:
+            logger.debug(
+                "OTBR inventory payload shape was not recognized from %s%s: %s",
+                base_url,
+                self.OTBR_INVENTORY_PATH,
+                response.body,
+            )
+            return []
 
-        logger.debug(
-            "OTBR inventory payload shape was not recognized from %s%s: %s",
-            base_url,
-            self.OTBR_INVENTORY_PATH,
-            response.body,
+        logger.info("OTBR inventory returned %d candidate(s)", len(candidates))
+        if not candidates:
+            logger.info(
+                "No OTBR inventory device candidates available from %s",
+                base_url,
+            )
+        return candidates
+
+    async def _fetch_otbr_node_candidates(self, base_url):
+        response = await self._http_request(
+            'GET',
+            f'{base_url}{self.OTBR_NODE_PATH}',
+            headers={'Accept': 'application/json, text/plain, */*'},
         )
-        return []
+        if response is None:
+            logger.warning("OTBR node request failed for %s%s", base_url, self.OTBR_NODE_PATH)
+            return []
+
+        if response.status >= 400:
+            logger.warning(
+                "OTBR node request returned HTTP %s from %s%s",
+                response.status,
+                base_url,
+                self.OTBR_NODE_PATH,
+            )
+            return []
+
+        self._log_otbr_node_payload(base_url, response)
+        local_addrs = await self._collect_local_interface_addresses()
+        candidates = self._extract_otbr_node_candidates(
+            response.json_data,
+            local_addrs=local_addrs,
+        )
+        logger.info(
+            "OTBR %s fallback produced %d candidate(s) after filtering local addresses",
+            self.OTBR_NODE_PATH,
+            len(candidates),
+        )
+        if not candidates:
+            logger.info(
+                "No OTBR %s candidates were derivable from %s",
+                self.OTBR_NODE_PATH,
+                base_url,
+            )
+        return candidates
 
     async def _resolve_otbr_base_url(self):
         if self.otbr_base_url_override:
@@ -564,6 +610,36 @@ class CoAPDiscovery:
             ", ".join(statuses),
         )
 
+    def _log_otbr_node_payload(self, base_url, response):
+        payload = response.json_data
+        preview = (response.body or "").replace("\n", " ").strip()
+        if len(preview) > 300:
+            preview = preview[:300] + "..."
+
+        if isinstance(payload, dict):
+            logger.info(
+                "OTBR %s payload from %s has top-level keys: %s",
+                self.OTBR_NODE_PATH,
+                base_url,
+                ", ".join(sorted(payload.keys())) or "(none)",
+            )
+        elif isinstance(payload, list):
+            logger.info(
+                "OTBR %s payload from %s is a list with %d item(s)",
+                self.OTBR_NODE_PATH,
+                base_url,
+                len(payload),
+            )
+        else:
+            logger.info(
+                "OTBR %s payload from %s is non-JSON or unstructured",
+                self.OTBR_NODE_PATH,
+                base_url,
+            )
+
+        if preview:
+            logger.info("OTBR %s preview: %s", self.OTBR_NODE_PATH, preview)
+
     async def _supervisor_request(self, method, path, payload=None):
         return await self._http_request(
             method,
@@ -689,13 +765,60 @@ class CoAPDiscovery:
 
         return candidates
 
+    def _extract_otbr_node_candidates(self, payload, local_addrs=None):
+        local_addrs = local_addrs or set()
+        addresses = sorted(self._collect_ipv6_values(payload))
+        candidates = []
+        next_index = 1
+
+        for address in addresses:
+            if address in local_addrs:
+                continue
+
+            candidates.append(
+                {
+                    'device_id': f'node_candidate_{next_index}',
+                    'ipv6_address': address,
+                    'eui64': None,
+                    'role': 'unknown',
+                }
+            )
+            next_index += 1
+
+        return candidates
+
+    def _collect_ipv6_values(self, payload):
+        found = set()
+
+        def visit(value):
+            if isinstance(value, dict):
+                for nested in value.values():
+                    visit(nested)
+                return
+
+            if isinstance(value, list):
+                for nested in value:
+                    visit(nested)
+                return
+
+            if isinstance(value, str):
+                normalized = self._normalize_candidate(value)
+                if normalized:
+                    found.add(normalized)
+
+        visit(payload)
+        return found
+
+    async def _collect_local_interface_addresses(self):
+        output = await self._run_command(
+            ['ip', '-6', 'addr', 'show', 'dev', self.thread_interface]
+        )
+        return self._extract_interface_addresses(output)
+
     async def _collect_interface_candidates(self):
         candidates = set()
 
-        local_addrs_output = await self._run_command(
-            ['ip', '-6', 'addr', 'show', 'dev', self.thread_interface]
-        )
-        local_addrs = self._extract_interface_addresses(local_addrs_output)
+        local_addrs = await self._collect_local_interface_addresses()
 
         neigh_output = await self._run_command(
             ['ip', '-6', 'neigh', 'show', 'dev', self.thread_interface]
@@ -826,6 +949,8 @@ class CoAPDiscovery:
 
         candidate = candidate.strip('[]')
         candidate = candidate.split('%')[0]
+        candidate = candidate.split('/')[0]
+        candidate = candidate.rstrip(',;')
 
         try:
             addr = ipaddress.IPv6Address(candidate)

@@ -1,11 +1,11 @@
-# Current Steps - v0.6.4
+# Current Steps - v0.6.5
 
 ## Current State
 
 - Firmware is not the active blocker.
 - The nRF54L15 can join Thread as `child` when commissioned with the documented Method 2 flow from `C:\myfw\dot-kit\README.md`.
 - The device can ping the OTBR Thread-side IPv6, which proves mesh reachability.
-- The bridge cleanup is complete in this tree and versioned as `0.6.4`.
+- The bridge cleanup is complete in this tree and versioned as `0.6.5`.
 
 ## Proven Facts
 
@@ -32,9 +32,11 @@
 
 - Removed guessed OTBR defaults from runtime discovery
 - Added Supervisor-based OTBR resolution
+- Added OTBR `/node` fallback when `/api/devices` is missing
 - Added explicit logging for:
   - OTBR web unreachable
   - OTBR inventory endpoint missing
+  - OTBR `/node` payload shape and preview
   - OTBR inventory reachable but empty
 - Preserved:
   - capability reconciliation
@@ -46,14 +48,16 @@
 
 ## Current Live-Test Steps
 
-1. Redeploy this exact bridge tree as add-on version `0.6.4`.
+1. Redeploy this exact bridge tree as add-on version `0.6.5`.
 2. Keep the device attached as `child`. Do not vary firmware during this test.
 3. Restart only the bridge add-on.
 4. Watch for one of these log paths:
    - `Resolved OTBR web base via Supervisor API: ...`
    - `OTBR web is reachable at ... but /api/devices returned HTTP 404`
+   - `OTBR /node payload ...`
+   - `OTBR /node fallback produced ... candidate(s)`
    - `OTBR inventory returned ... candidate(s)`
-5. If OTBR inventory returns `404`, treat that as confirmed behavior for this HA OTBR build and stop spending cycles on OTBR inventory assumptions.
+5. If OTBR inventory returns `404`, inspect the `/node` logs next. That is now the primary OTBR fallback path on this HA OTBR build.
 
 ## Success Target
 

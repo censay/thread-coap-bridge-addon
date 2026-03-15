@@ -1,4 +1,4 @@
-# Thread CoAP Bridge Docs - v0.6.4
+# Thread CoAP Bridge Docs - v0.6.5
 
 ## Purpose
 
@@ -9,10 +9,11 @@ This document is the operational companion to `README.md`. It keeps the discover
 The bridge now uses a layered model:
 
 1. OTBR inventory when the installed OTBR build exposes it
-2. Seed IPv6 bootstrap for explicitly supplied devices
-3. Interface-derived IPv6 candidates from `wpan0`
-4. Multicast CoAP discovery
-5. Unicast re-discovery for devices already known to the registry
+2. OTBR `/node` fallback when inventory is absent on that HA OTBR build
+3. Seed IPv6 bootstrap for explicitly supplied devices
+4. Interface-derived IPv6 candidates from `wpan0`
+5. Multicast CoAP discovery
+6. Unicast re-discovery for devices already known to the registry
 
 This is deliberate:
 

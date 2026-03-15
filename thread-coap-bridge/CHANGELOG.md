@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-03-15
+
+### Added
+- OTBR `/node` fallback when `/api/devices` is absent on the installed HA OTBR build
+- Logging of OTBR `/node` payload shape and preview to support live discovery debugging
+
+### Changed
+- OTBR discovery now keeps working after `/api/devices` returns `404` by probing `/node` on subsequent cycles
+- Add-on version updated to `0.6.5`
+
 ## [0.6.4] - 2026-03-12
 
 ### Added

@@ -1,4 +1,4 @@
-# Thread CoAP Bridge - v0.6.4
+# Thread CoAP Bridge - v0.6.5
 
 Home Assistant add-on for bridging Thread-attached CoAP devices into MQTT Discovery and stable `thread/...` topics.
 
@@ -17,6 +17,7 @@ It also removes stale OTBR assumptions from the previous iteration:
 
 - the bridge no longer guesses OTBR web addresses
 - the bridge no longer assumes `/api/devices` exists on every HA OTBR build
+- when OTBR inventory is missing, the bridge now falls back to OTBR `/node` and logs the payload shape
 - OTBR resolution now prefers low-privilege Supervisor add-on info probes before broader add-on enumeration
 - when OTBR web is reachable but inventory is absent, the bridge logs that fact explicitly and continues with the other discovery paths
 
@@ -27,10 +28,11 @@ The immediate success target for this path is one visible device with `/uptime`.
 Each discovery cycle now works in this order:
 
 1. Optional OTBR inventory, if the installed OTBR build exposes a usable inventory endpoint
-2. Optional seed IPv6 bootstrap from `seed_ipv6_addresses`
-3. Interface-derived IPv6 candidates from `wpan0`
-4. Multicast `/.well-known/core`
-5. Unicast re-discovery of previously known offline devices
+2. OTBR `/node` fallback when inventory is absent
+3. Optional seed IPv6 bootstrap from `seed_ipv6_addresses`
+4. Interface-derived IPv6 candidates from `wpan0`
+5. Multicast `/.well-known/core`
+6. Unicast re-discovery of previously known offline devices
 
 This preserves the fork’s useful fallback behavior without pretending that any one path is universally available on every HAOS installation.
 

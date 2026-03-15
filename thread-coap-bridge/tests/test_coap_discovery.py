@@ -298,18 +298,70 @@ def test_otbr_inventory_is_disabled_after_http_404():
     async def scenario():
         discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://172.30.32.1:8081"})
         discovery.context = object()
+        calls = []
 
         async def fake_http_request(method, url, headers=None, payload=None):
+            calls.append(url)
             if url == "http://172.30.32.1:8081/api/devices":
                 return HttpResponse(404, '{"ErrorCode":404}', {"ErrorCode": 404})
             return HttpResponse(200, "{}", {})
 
         discovery._http_request = fake_http_request
+        discovery._collect_local_interface_addresses = lambda: asyncio.sleep(0, result=set())
 
         assert await discovery.discover_otbr_devices() == []
         assert discovery.otbr_inventory_supported is False
+        assert calls == [
+            "http://172.30.32.1:8081/api/devices",
+            "http://172.30.32.1:8081/",
+            "http://172.30.32.1:8081/get_properties",
+            "http://172.30.32.1:8081/api/node",
+            "http://172.30.32.1:8081/node",
+            "http://172.30.32.1:8081/node",
+        ]
 
     run(scenario())
+
+
+def test_otbr_node_payload_extracts_only_non_local_ipv6_candidates():
+    discovery = CoAPDiscovery(None, {})
+
+    payload = {
+        "NetworkName": "OpenThread",
+        "Rloc": "fd30:f978:c1a3:183c:0:ff:fe00:fc11",
+        "MeshLocalAddress": "fdde:ad00:beef:0:235e:586d:bd3b:4921",
+        "Addresses": [
+            "fd35:5807:223f:1:426e:bdbf:1ec3:ee80",
+            "fd35:5807:223f:1:235e:586d:bd3b:4921",
+            "fe80::1",
+        ],
+    }
+
+    candidates = discovery._extract_otbr_node_candidates(
+        payload,
+        local_addrs={"fd35:5807:223f:1:426e:bdbf:1ec3:ee80"},
+    )
+
+    assert candidates == [
+        {
+            "device_id": "node_candidate_1",
+            "ipv6_address": "fd30:f978:c1a3:183c:0:ff:fe00:fc11",
+            "eui64": None,
+            "role": "unknown",
+        },
+        {
+            "device_id": "node_candidate_2",
+            "ipv6_address": "fd35:5807:223f:1:235e:586d:bd3b:4921",
+            "eui64": None,
+            "role": "unknown",
+        },
+        {
+            "device_id": "node_candidate_3",
+            "ipv6_address": "fdde:ad00:beef:0:235e:586d:bd3b:4921",
+            "eui64": None,
+            "role": "unknown",
+        },
+    ]
 
 
 def test_otbr_candidates_are_probed_before_interface_and_multicast():
@@ -333,16 +385,14 @@ def test_otbr_candidates_are_probed_before_interface_and_multicast():
         async def fake_resolve_base_url():
             return "http://172.30.32.1:8081"
 
-        async def fake_fetch_otbr_devices(base_url):
+        async def fake_fetch_otbr_candidates(base_url):
             assert base_url == "http://172.30.32.1:8081"
             return [
                 {
-                    "id": "de62e016db392476",
-                    "attributes": {
-                        "extAddress": "de62e016db392476",
-                        "omrIpv6Address": ["fd35:5807:223f:1:235e:586d:bd3b:4921"],
-                        "eui64": "62:34:56:78:90:aa:cd:ea",
-                    },
+                    "device_id": "de62e016db392476",
+                    "ipv6_address": "fd35:5807:223f:1:235e:586d:bd3b:4921",
+                    "eui64": "62:34:56:78:90:aa:cd:ea",
+                    "role": "child",
                 }
             ]
 
@@ -352,7 +402,7 @@ def test_otbr_candidates_are_probed_before_interface_and_multicast():
             return [{"uri_path": "/auth", "resource_type": "auth", "observable": False}]
 
         discovery._resolve_otbr_base_url = fake_resolve_base_url
-        discovery._fetch_otbr_devices = fake_fetch_otbr_devices
+        discovery._fetch_otbr_candidates = fake_fetch_otbr_candidates
         discovery.query_device_resources = fake_query
 
         results = await discovery.discover_otbr_devices()

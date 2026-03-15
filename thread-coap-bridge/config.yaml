@@ -1,5 +1,5 @@
 name: "Thread CoAP Bridge"
-version: "0.6.4"
+version: "0.6.5"
 slug: "thread_coap_bridge"
 description: "Bridge Thread CoAP devices to Home Assistant with MQTT capability sync and auth support"
 url: "https://github.com/censay/thread-coap-bridge-addon"
