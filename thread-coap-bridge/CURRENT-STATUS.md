@@ -1,4 +1,4 @@
-# Current Status - v0.6.7
+# Current Status - v0.6.8
 
 ## Working Baseline
 

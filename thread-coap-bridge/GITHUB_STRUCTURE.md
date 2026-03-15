@@ -1,4 +1,4 @@
-# Repository Structure Guide - v0.6.7
+# Repository Structure Guide - v0.6.8
 
 ## Current Repository Shape
 

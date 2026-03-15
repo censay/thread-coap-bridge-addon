@@ -1,4 +1,4 @@
-# Current Steps - v0.6.7
+# Current Steps - v0.6.8
 
 ## Start Here
 
@@ -20,7 +20,7 @@ This file is the short resume sheet for the next work session.
 ## Before Any New Live Test
 
 1. Verify the deployed add-on copy really matches this tree:
-   - `thread-coap-bridge/config.yaml` must say `version: "0.6.7"`
+   - `thread-coap-bridge/config.yaml` must say `version: "0.6.8"`
 2. Watch for:
    - `CoAP announce server listening on /announce ...`
    - `Received CoAP announce from ...`

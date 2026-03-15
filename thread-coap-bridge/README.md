@@ -1,4 +1,4 @@
-# Thread CoAP Bridge - v0.6.7
+# Thread CoAP Bridge - v0.6.8
 
 Home Assistant add-on for bridging Thread-attached CoAP devices into MQTT Discovery and stable `thread/...` topics.
 

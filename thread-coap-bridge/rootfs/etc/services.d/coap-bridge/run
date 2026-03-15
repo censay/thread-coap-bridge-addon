@@ -55,13 +55,13 @@ bashio::log.info "  Thread interface: $(bashio::config 'thread_interface')"
 bashio::log.info "  Offline threshold: $(bashio::config 'offline_threshold_polls') polls"
 bashio::log.info "  Cleanup after: $(bashio::config 'cleanup_after_hours') hours"
 
-# Remove old database on first run with new schema
-# The app will create a new one with the correct schema automatically
-if [ -f "/data/devices.db" ] && [ ! -f "/data/.schema_updated" ]; then
-    bashio::log.warning "Removing old database (will be recreated with new schema)"
-    rm -f /data/devices.db
+# Preserve the device registry across restarts and upgrades.
+# The Python app applies lightweight schema migrations on startup.
+if [ ! -f "/data/.schema_updated" ]; then
+    if [ -f "/data/devices.db" ]; then
+        bashio::log.info "Preserving existing device registry at /data/devices.db"
+    fi
     touch /data/.schema_updated
-    bashio::log.info "Database will be recreated - devices will need to be rediscovered"
 fi
 
 # Run the Python application
