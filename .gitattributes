@@ -1,0 +1,4 @@
+* text=auto
+
+# Home Assistant service scripts must stay LF-only.
+thread-coap-bridge/rootfs/etc/services.d/* text eol=lf

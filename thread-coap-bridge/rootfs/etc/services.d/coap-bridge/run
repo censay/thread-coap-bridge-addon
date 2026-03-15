@@ -5,11 +5,11 @@
 
 bashio::log.info "Starting Thread CoAP Bridge..."
 
-# 🔧 DEBUG SHELL MODE
+# Debug shell mode
 if bashio::config.has_value 'debug_shell' && bashio::config.true 'debug_shell'; then
     bashio::log.warning "==============================="
     bashio::log.warning "DEBUG SHELL ENABLED"
-    bashio::log.warning "Use SSH & Web Terminal → Web Terminal"
+    bashio::log.warning "Use SSH & Web Terminal -> Web Terminal"
     bashio::log.warning "Type commands to debug CoAP/Thread"
     bashio::log.warning "==============================="
     exec /bin/bash
@@ -67,4 +67,3 @@ fi
 # Run the Python application
 cd /app
 exec python3 main.py
-
