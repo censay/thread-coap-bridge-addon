@@ -21,12 +21,14 @@
 - `ot-ctl child table` was empty on OTBR, which only means the device is not a direct child of the border router
 - `/tmp/otbr-agent-rest-api` reported the OTBR web bind as `172.30.32.1:8081`
 - `http://172.30.32.1:8081/api/devices` returned `404`
+- `http://172.30.32.1:8081/node` returned `200`, but only described the border router itself
 
 ### Bridge side
 
 - Multicast on `wpan0` is still unreliable in this HAOS environment
 - Supervisor `/addons` enumeration returned `403`
 - The bridge now probes OTBR add-on `info` endpoints directly before trying broader Supervisor enumeration
+- The latest `v0.6.5` OTBR `/node` fallback produced `0` candidates because the payload only contained border-router metadata (`BaId`, `ExtAddress`, `ExtPanId`, `LeaderData`, `NetworkName`, `NumOfRouter`, `Rloc16`, `RlocAddress`, `State`)
 
 ## What Changed In v0.6.4
 
@@ -57,7 +59,11 @@
    - `OTBR /node payload ...`
    - `OTBR /node fallback produced ... candidate(s)`
    - `OTBR inventory returned ... candidate(s)`
-5. If OTBR inventory returns `404`, inspect the `/node` logs next. That is now the primary OTBR fallback path on this HA OTBR build.
+5. OTBR `/node` is now proven to be a border-router self-description endpoint on this HA OTBR build, not a mesh inventory endpoint.
+6. The next architecture step should not be an older bridge rollback. It should be a new discovery source:
+   - device-initiated announce/register to the bridge, or
+   - a helper with direct OTBR CLI/topology access, or
+   - a separate OTBR deployment with its own radio if we want independent control
 
 ## Success Target
 
@@ -82,7 +88,8 @@ Bonus success:
   - `ot-ctl neighbor table`
   - `ot-ctl child table`
   - `/tmp/otbr-agent-rest-api`
-  - real HTTP status codes from OTBR web
+- real HTTP status codes from OTBR web
+- OTBR `/node` payload shape from bridge logs
 - Bridge:
   - add-on logs
   - `devices.db`
