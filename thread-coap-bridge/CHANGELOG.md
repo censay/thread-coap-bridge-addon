@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - First-contact discovery no longer depends solely on OTBR inventory or aiocoap multicast discovery
 - Add-on version updated to `0.6.6`
+- Documentation now reflects announce-first discovery, the validated HAOTBR behavior, known sticky-button and slow-uptime behavior, and the planned `kit-backend` upgrade path
 
 ## [0.6.5] - 2026-03-15
 

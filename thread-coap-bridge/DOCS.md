@@ -2,31 +2,58 @@
 
 ## Purpose
 
-This document is the operational companion to `README.md`. It keeps the discovery and troubleshooting path aligned with what has actually been proven on HAOS + OTBR.
+This document is the operational companion to `README.md`. It captures the behavior that has actually been proven on HAOS + OTBR with the current `dot-kit` firmware.
 
-## Discovery Model
+## Operational Model
 
-The bridge now uses a layered model:
+### First contact
 
-1. OTBR inventory when the installed OTBR build exposes it
-2. OTBR `/node` fallback when inventory is absent on that HA OTBR build
-3. Seed IPv6 bootstrap for explicitly supplied devices
-4. Interface-derived IPv6 candidates from `wpan0`
-5. Multicast CoAP discovery
-6. Unicast re-discovery for devices already known to the registry
+The primary first-contact path is now device initiated:
 
-This is deliberate:
+1. the device attaches to Thread
+2. the device sends a CoAP POST to `/announce`
+3. the bridge uses the source IPv6 and announced `device_id`
+4. the bridge fetches `/.well-known/core`
+5. the bridge reconciles entities and begins normal monitoring
 
-- OTBR inventory is the cleanest source when available
-- seeds preserve first-contact recovery when multicast is unreliable
-- interface heuristics and multicast remain fallback paths
-- registry-based re-discovery preserves returning devices
+### Normal runtime
+
+After registration:
+
+- observe is used where the resource and device behavior make sense
+- polling is used for slow-changing resources such as battery, voltage, and uptime
+- runtime reconcile restarts watchers when the device reappears or its resource set changes
+- auth state is maintained in the bridge and expires back to tier `1` after the configured TTL
+
+## Fallback Model
+
+Fallbacks still exist, but they are now clearly secondary:
+
+1. OTBR inventory, if the installed OTBR build exposes it
+2. OTBR `/node` diagnostics
+3. seed IPv6 bootstrap
+4. interface-derived candidates from `wpan0`
+5. multicast `/.well-known/core`
+6. unicast re-discovery of offline devices already known to the registry
+
+These are helpful for diagnosis and recovery, but they are not the main success path anymore.
+
+## Proven Facts On The Validated HAOS Setup
+
+- the device can join Thread and announce itself
+- OTBR web can be resolved via Supervisor metadata
+- `/tmp/otbr-agent-rest-api` is the runtime OTBR bind source
+- OTBR `/api/devices` returns `404` on the installed HA OTBR build
+- OTBR `/node` returns `200`, but only describes the border router itself
+- aiocoap multicast on `wpan0` remains unreliable for first contact
 
 ## Sources Of Truth
 
 ### Firmware
 
 - `C:\myfw\dot-kit\README.md`
+- `C:\myfw\dot-kit\CURRENT-STATUS.md`
+- `C:\myfw\dot-kit\prj.conf`
 - `C:\myfw\dot-kit\prj_uart.conf`
 
 Key fact:
@@ -52,64 +79,42 @@ Key fact:
 - `devices.db`
 - MQTT state under `thread/...`
 
-## OTBR Notes
+## Known Current Behavior
 
-The bridge no longer assumes these are valid:
+### Buttons
 
-- `http://127.0.0.1:8081/api`
-- `http://localhost:8081/api`
-- `http://core-openthread-border-router:8081/api`
+Buttons are currently represented as `binary_sensor` entities. Combined with NON-confirmable observe notifications from a sleepy device, this can make release events look delayed or sticky in HA.
 
-Those were stale guesses.
+### Uptime
 
-The current logic is:
+`uptime` is intentionally slow:
 
-- if `otbr_rest_url` is set, use it as a direct override
-- otherwise, probe known OTBR add-on `info` endpoints via Supervisor first
-- only fall back to broader Supervisor add-on enumeration when direct OTBR probes miss
-- extract the runtime OTBR add-on IP or hostname
-- probe `http://<resolved-bind>:8081/api/devices`
+- 120-second poll interval
+- 80-second initial delay
 
-If that inventory endpoint returns `404`, the bridge logs the OTBR web surface and disables OTBR inventory for that process run instead of retrying a stale path forever.
+### LED behavior
 
-## Why This Matters
+The bridge can confirm that `/led` is working as a CoAP resource, but it cannot promise that the user will see a specific on-board LED. That hardware mapping lives in the firmware and devicetree.
 
-On the validated HAOS system used for this path:
+## What Not To Reinvestigate First
 
-- the device could join Thread and ping OTBR
-- the OTBR web bind existed
-- `/api/devices` returned `404`
+Do not restart from these assumptions unless the announce path regresses:
 
-That means these are different failure classes:
+- OTBR inventory should list all mesh children
+- OTBR `/node` should expose mesh-wide device inventory
+- aiocoap multicast on `wpan0` is good enough as the main discovery source
 
-- mesh is down
-- device is detached
-- OTBR web is unreachable
-- OTBR web exists but does not expose inventory
+Those were all investigated already and are not the current best path.
 
-The bridge now keeps those classes separate in code and logs.
+## Resume Checklist
 
-## Runtime Expectations
+If someone picks this project up later, verify in this order:
 
-### Minimum success case
-
-One visible device with:
-
-- availability
-- `/uptime`
-
-### Bonus success case
-
-All exposed resources from `/.well-known/core` reconciled into HA and MQTT.
-
-## MQTT Contract
-
-Consumers outside Home Assistant should use:
-
-- `thread/{device_id}/availability`
-- `thread/{device_id}/{resource}/state`
-- `thread/{device_id}/{resource}/availability`
-- `thread/{device_id}/auth_tier/state`
+1. bridge log shows `CoAP announce server listening on /announce ...`
+2. device log shows `Announce sent to ff03::1:5685/announce`
+3. bridge log shows `Received CoAP announce from ...`
+4. bridge log shows capability reconcile and MQTT discovery publish
+5. HA shows `uptime` and the rest of the expected entities
 
 ## Matter Hub Reference
 
@@ -120,24 +125,4 @@ Use it when:
 - the bridge has already turned Thread/CoAP devices into HA entities
 - you want those HA entities exposed outward over Matter
 
-Do not use it as a substitute for OTBR discovery or CoAP inventory.
-
-## Cleanup Rules Applied In v0.6.4
-
-- removed guessed OTBR default endpoints from code
-- stopped documenting `/api/devices` as if it were universally available
-- preserved seed bootstrap and offline re-discovery as useful fallback behavior
-- kept `/auth`, capability reconciliation, and SED support
-- updated version references across config and docs
-
-## Next Approval Gate
-
-After this cleanup lands, the next live test should be:
-
-1. install the add-on version built from this tree
-2. keep the chip attached as `child`
-3. confirm whether bridge logs show:
-   - Supervisor OTBR resolution
-   - OTBR inventory unsupported or supported
-   - fallback discovery progressing
-4. stop only after either `/uptime` appears or the next single blocker is isolated
+Do not use it as a substitute for first-contact discovery.

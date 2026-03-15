@@ -1,244 +1,132 @@
-# Installation Guide
+# Installation Guide - v0.6.6
 
-## Quick Start
+## What You Are Installing
 
-### Prerequisites
+This repository is a Home Assistant custom add-on repository. The add-on itself lives in:
 
-1. **Home Assistant** (HA OS, Supervised, or Container)
-2. **OpenThread Border Router** add-on installed and running
-3. **Mosquitto broker** add-on installed and running
-4. At least one Thread device with CoAP server
+- `thread-coap-bridge/`
 
-### Installation Steps
+The repository root contains:
 
-#### Option 1: Local Installation (Development/Testing)
+- `repository.yaml`
 
-1. **SSH into Home Assistant:**
-   ```bash
-   ssh root@homeassistant.local
-   # Or use the Terminal & SSH add-on
-   ```
+Do not flatten that structure when copying or publishing it.
 
-2. **Create add-on directory:**
-   ```bash
-   mkdir -p /addons/thread-coap-bridge
-   cd /addons/thread-coap-bridge
-   ```
+## Prerequisites
 
-3. **Copy add-on files:**
-   ```bash
-   # Extract the downloaded zip file to this directory
-   # Or use git if available:
-   # git clone https://github.com/censay/thread-coap-bridge-addon.git .
-   ```
+1. Home Assistant with add-on support
+2. OpenThread Border Router add-on installed and running
+3. Mosquitto broker add-on installed and running
+4. A commissioned Thread device running the matching `dot-kit` firmware
 
-4. **Tell Home Assistant about local add-ons:**
-   - Open Home Assistant web interface
-   - Go to **Settings** → **Add-ons** → **Add-on Store**
-   - Click the menu icon (⋮) in the top right
-   - Select **Repositories**
-   - Add local path: `/addons`
-   - Click **Add**
+## Option 1: Local Installation Over Samba
 
-5. **Install the add-on:**
-   - Refresh the add-on store page
-   - Look for "Thread CoAP Bridge" under **Local Add-ons**
-   - Click on it
-   - Click **Install**
+This is the best path for development and A/B testing.
 
-#### Option 2: GitHub Repository (Recommended)
+### Copy layout
 
-1. **Push code to GitHub:**
-   ```bash
-   # On your development machine
-   cd thread-coap-bridge-addon
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/censay/thread-coap-bridge-addon.git
-   git push -u origin main
-   ```
+Copy the repository root into the Home Assistant add-ons share so the result looks like:
 
-2. **Add repository to Home Assistant:**
-   - Open Home Assistant
-   - Go to **Settings** → **Add-ons** → **Add-on Store**
-   - Click menu (⋮) → **Repositories**
-   - Add: `https://github.com/censay/thread-coap-bridge-addon`
-   - Click **Add**
+```text
+<HA addons share>/thread-coap-bridge-addon/
+  repository.yaml
+  thread-coap-bridge/
+    config.yaml
+    Dockerfile
+    rootfs/
+```
 
-3. **Install the add-on:**
-   - Refresh the add-on store
-   - Find "Thread CoAP Bridge"
-   - Click **Install**
+The important point is that `repository.yaml` stays at the copied repo root and `config.yaml` stays inside `thread-coap-bridge/`.
 
-### Configuration
+### Install steps
 
-Version `0.6.0` adds automatic capability reconciliation plus `/auth` bridge entities, so add/remove cycles during firmware development no longer require manual SQLite or retained MQTT cleanup.
+1. Delete any stale local copy of the repo from the HA add-ons share.
+2. Copy the fresh repo root into the add-ons share.
+3. In Home Assistant, open the Add-on Store and refresh it.
+4. Open the local repository entry.
+5. Install or rebuild the `Thread CoAP Bridge` add-on.
 
-1. **Click on the Thread CoAP Bridge add-on**
+## Option 2: GitHub Custom Repository
 
-2. **Go to the Configuration tab**
+If you want Home Assistant to pull from GitHub instead of Samba:
 
-3. **Set your MQTT credentials:**
-   ```yaml
-   mqtt_host: core-mosquitto
-   mqtt_port: 1883
-   mqtt_user: homeassistant
-   mqtt_password: your_mqtt_password
-   discovery_interval: 60
-   log_level: info
-   thread_interface: wpan0
-   multicast_address: ff03::fd
-   ```
+1. Push this repo to GitHub.
+2. In Home Assistant, open:
+   - Settings -> Add-ons -> Add-on Store -> menu -> Repositories
+3. Add:
+   - `https://github.com/censay/thread-coap-bridge-addon`
+4. For branch-specific testing, append `#branch-name`.
 
-4. **Save the configuration**
+This repository already has the correct custom repository shape.
 
-5. **Go to the Info tab**
+## Configuration
 
-6. **Start the add-on**
+Minimum useful configuration:
 
-7. **Check the Log tab** to verify it started successfully
+```yaml
+mqtt_host: core-mosquitto
+mqtt_port: 1883
+mqtt_user: homeassistant
+mqtt_password: your_mqtt_password
+discovery_interval: 60
+log_level: info
+thread_interface: wpan0
+multicast_address: ff03::fd
+```
 
-### Verification
+Notes:
 
-1. **Check OTBR is running:**
-   - Settings → Add-ons → OpenThread Border Router
-   - Should show "Running"
+- `otbr_rest_url` is optional and should only be set as an override
+- OTBR inventory is diagnostic or fallback on the validated HA build, not the primary first-contact path
+- first contact is now expected to come from the device announce flow
 
-2. **Check Thread network status:**
-   ```bash
-   # SSH into HA
-   ot-ctl state
-   # Should show: leader, router, or child
-   ```
+## Verification
 
-3. **Verify MQTT broker:**
-   - Settings → Add-ons → Mosquitto broker
-   - Should show "Running"
+After starting the add-on, look for these logs:
 
-4. **Commission a test device:**
-   ```bash
-   # Enable Thread joiner on device
-   # Then on OTBR:
-   ot-ctl commissioner start
-   ot-ctl commissioner joiner add * J01NME 120
-   ```
+- `Initializing CoAP announce server...`
+- `CoAP announce server listening on /announce ...`
+- `Received CoAP announce from ...`
+- `Handling announce for ...`
 
-5. **Watch the bridge logs:**
-   - Settings → Add-ons → Thread CoAP Bridge
-   - Log tab
-   - Should see discovery attempts and device registration
-
-6. **Check Home Assistant:**
-   - Settings → Devices & Services
-   - Devices should appear with "Thread Sensor" prefix
-   - Entities should be created automatically
+After that, expect MQTT discovery publish and HA entity creation.
 
 ## Troubleshooting
 
-### Add-on won't start
+### Add-on starts but devices do not appear
 
-1. **Check logs:**
-   - Look for error messages in the Log tab
-   - Common issues:
-     - MQTT broker not running
-     - Invalid configuration
-     - Python dependency errors
+Check these in order:
 
-2. **Verify dependencies:**
-   - Mosquitto broker must be started first
-   - OTBR should be running
+1. Bridge log shows the announce server listening.
+2. Device serial log shows `Announce sent to ff03::1:5685/announce`.
+3. Bridge log shows `Received CoAP announce from ...`.
+4. Device responds to `/.well-known/core`.
 
-3. **Check configuration:**
-   - MQTT credentials correct?
-   - Network settings valid?
+Do not start with OTBR inventory assumptions. On the validated HA build:
 
-### Devices not discovered
+- OTBR `/api/devices` returned `404`
+- OTBR `/node` only described the border router
 
-1. **Verify Thread network:**
-   ```bash
-   ot-ctl state
-   ot-ctl netdata show
-   ```
+### Local add-on copy looks wrong
 
-2. **Check device is joined:**
-   ```bash
-   ot-ctl child list
-   # Or on the device itself:
-   # ot-ctl ipaddr
-   ```
+Verify:
 
-3. **Test manual CoAP request:**
-   ```bash
-   # Install aiocoap-client
-   pip3 install aiocoap
-   
-   # Query device
-   aiocoap-client -m GET coap://[device-ipv6]/.well-known/core
-   ```
+- `repository.yaml` exists at the copied repo root
+- `thread-coap-bridge/config.yaml` exists inside that repo copy
+- `thread-coap-bridge/config.yaml` shows the expected version
 
-4. **Enable debug logging:**
-   - Configuration tab
-   - Set `log_level: debug`
-   - Restart add-on
-   - Check logs for detailed discovery attempts
+If in doubt, delete the copied repo folder from the add-ons share and recopy the whole repo root.
 
-### Entities not appearing in HA
+### MQTT entities do not appear
 
-1. **Check MQTT topics:**
-   - Install MQTT Explorer
-   - Connect to broker
-   - Look for topics under `homeassistant/`
+Check:
 
-2. **Verify MQTT Discovery is enabled:**
-   - Settings → Devices & Services → MQTT
-   - Check "Enable discovery" is ON
+1. Mosquitto is running.
+2. MQTT integration in HA is connected.
+3. The bridge log shows MQTT discovery publishing.
 
-3. **Check Home Assistant logs:**
-   - Settings → System → Logs
-   - Look for MQTT-related errors
+## Development Notes
 
-4. **Restart Home Assistant:**
-   - Settings → System → Restart
-
-## Updating the Add-on
-
-### Local Installation
-```bash
-cd /addons/thread-coap-bridge
-git pull
-# Or copy new files manually
-```
-
-Then in Home Assistant:
-- Go to add-on page
-- Click **Rebuild**
-
-### GitHub Repository
-- Updates appear automatically in HA
-- Click **Update** button when available
-
-## Uninstalling
-
-1. **Stop the add-on**
-2. **Click Uninstall**
-3. **Remove repository** (optional)
-   - Add-on Store → menu (⋮) → Repositories
-   - Remove the repository URL
-
-## Next Steps
-
-After successful installation:
-
-1. **Commission your devices** - Use Thread Joiner credentials
-2. **Configure entities in HA** - Customize names, add to dashboards
-3. **Create automations** - Use device entities in automations
-4. **Monitor logs** - Watch for any errors or warnings
-5. **Optimize settings** - Adjust discovery interval for your needs
-
-## Getting Help
-
-- **GitHub Issues:** https://github.com/censay/thread-coap-bridge-addon/issues
-- **Home Assistant Community:** https://community.home-assistant.io/
-- **Documentation:** See DOCS.md and README.md
+- `README.md` describes the current working architecture.
+- `CURRENT-STATUS.md` is the shortest handoff document.
+- `DOCS.md` explains why announce-first discovery replaced OTBR inventory as the primary path.

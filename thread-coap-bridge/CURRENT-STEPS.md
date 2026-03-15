@@ -1,93 +1,42 @@
 # Current Steps - v0.6.6
 
-## Current State
+## Start Here
 
-- Firmware is not the active blocker.
-- The nRF54L15 can join Thread as `child` when commissioned with the documented Method 2 flow from `C:\myfw\dot-kit\README.md`.
-- The device can ping the OTBR Thread-side IPv6, which proves mesh reachability.
-- The bridge cleanup is complete in this tree and versioned as `0.6.6`.
+The project now has a working baseline. Read these in order:
 
-## Proven Facts
+1. `CURRENT-STATUS.md`
+2. `README.md`
+3. `DOCS.md`
 
-### Device side
+This file is the short resume sheet for the next work session.
 
-- `ot state` reached `child`
-- `ot ipaddr` showed routed Thread addresses
-- `ot ping fd35:5807:223f:1:426e:bdbf:1ec3:ee80 16 3` succeeded
+## Current Baseline
 
-### OTBR side
+- announce-first discovery is working
+- the bridge can register a `dot-kit` device and publish HA entities
+- `/auth` is working end to end
+- buttons, battery, voltage, uptime, and light entities all appear in HA
 
-- `ot-ctl neighbor table` showed routers
-- `ot-ctl child table` was empty on OTBR, which only means the device is not a direct child of the border router
-- `/tmp/otbr-agent-rest-api` reported the OTBR web bind as `172.30.32.1:8081`
-- `http://172.30.32.1:8081/api/devices` returned `404`
-- `http://172.30.32.1:8081/node` returned `200`, but only described the border router itself
+## Before Any New Live Test
 
-### Bridge side
-
-- Multicast on `wpan0` is still unreliable in this HAOS environment
-- Supervisor `/addons` enumeration returned `403`
-- The bridge now probes OTBR add-on `info` endpoints directly before trying broader Supervisor enumeration
-- The latest OTBR `/node` fallback produced `0` candidates because the payload only contained border-router metadata (`BaId`, `ExtAddress`, `ExtPanId`, `LeaderData`, `NetworkName`, `NumOfRouter`, `Rloc16`, `RlocAddress`, `State`)
-- `v0.6.6` adds a device-initiated CoAP `/announce` path so first contact no longer depends on OTBR inventory or multicast discovery
-
-## What Changed In v0.6.4
-
-- Removed guessed OTBR defaults from runtime discovery
-- Added Supervisor-based OTBR resolution
-- Added OTBR `/node` fallback when `/api/devices` is missing
-- Added explicit logging for:
-  - OTBR web unreachable
-  - OTBR inventory endpoint missing
-  - OTBR `/node` payload shape and preview
-  - OTBR inventory reachable but empty
-- Preserved:
-  - capability reconciliation
-  - `/auth`
-  - seed bootstrap
-  - interface-derived candidate probing
-  - multicast fallback
-  - offline unicast re-discovery
-
-## Current Live-Test Steps
-
-1. Redeploy this exact bridge tree as add-on version `0.6.6`.
-2. Build both firmware variants from the same source tree. The announce path is functional behavior, not debug-only behavior:
-   - debug: announce happens after manual `ot ifconfig up` + `ot thread start`
-   - production: announce happens automatically after attach
-3. Watch for these log paths:
+1. Verify the deployed add-on copy really matches this tree:
+   - `thread-coap-bridge/config.yaml` must say `version: "0.6.6"`
+2. Watch for:
    - `CoAP announce server listening on /announce ...`
    - `Received CoAP announce from ...`
-   - `Processing announce from ...`
-   - `Device ... registered with ... resources`
-4. OTBR `/node` remains a secondary diagnostic signal only. First contact should now come from the device itself.
+   - `Handling announce for ...`
+3. If announce does not happen, check the device first before OTBR or multicast.
 
-## Success Target
+## Current Known Issues
 
-Minimum success:
+- button entities can feel sticky because they are stateful `binary_sensor` entities backed by NON-confirmable observe notifications from a sleepy device
+- `uptime` updates slowly by design because it is polled every 120 seconds with an 80-second initial delay
+- OTBR `/api/devices` is unavailable on the validated HA OTBR build and should not be treated as a blocker once announce works
+- OTBR `/node` and multicast logs are still noisy and should be treated as secondary diagnostics
 
-- one visible device with `/uptime`
+## Recommended Next Improvements
 
-Bonus success:
-
-- full resource reconciliation from `/.well-known/core`
-
-## Sources Of Truth
-
-- Firmware docs:
-  - `C:\myfw\dot-kit\README.md`
-  - `C:\myfw\dot-kit\prj_uart.conf`
-- Device shell:
-  - `ot state`
-  - `ot ipaddr`
-  - `ot ping`
-- OTBR:
-  - `ot-ctl neighbor table`
-  - `ot-ctl child table`
-  - `/tmp/otbr-agent-rest-api`
-- real HTTP status codes from OTBR web
-- OTBR `/node` payload shape from bridge logs
-- Bridge:
-  - add-on logs
-  - `devices.db`
-  - MQTT topics under `thread/...`
+1. Trim non-blocking OTBR and multicast noise from logs.
+2. Decide whether button behavior should remain binary-state based or move toward event-style handling.
+3. Verify and document the intended hardware effect of `/led`.
+4. Evaluate eventual migration of bridge responsibilities into `C:\github\kit-backend\`.
