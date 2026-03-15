@@ -107,6 +107,21 @@ class CoAPDiscovery:
 
         return results
 
+    async def process_announcement(self, ipv6_addr, eui64=None):
+        """Register a device that announced itself to the bridge."""
+        if not self.context:
+            logger.error("CoAP context not initialized")
+            return None
+
+        logger.info("Processing announce from %s", ipv6_addr)
+        resources = await self.query_device_resources(ipv6_addr)
+        if not resources:
+            logger.warning("Announced device did not return /.well-known/core: %s", ipv6_addr)
+            return None
+
+        self.cycle_addresses.add(ipv6_addr)
+        return await self.registry.register_device(ipv6_addr, eui64=eui64, resources=resources)
+
     async def discover_devices(self):
         """Perform one discovery cycle and reconcile all replies."""
         if not self.context:

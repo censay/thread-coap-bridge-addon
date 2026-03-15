@@ -1,4 +1,4 @@
-# Thread CoAP Bridge Docs - v0.6.5
+# Thread CoAP Bridge Docs - v0.6.6
 
 ## Purpose
 

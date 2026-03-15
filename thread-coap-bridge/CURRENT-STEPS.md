@@ -1,11 +1,11 @@
-# Current Steps - v0.6.5
+# Current Steps - v0.6.6
 
 ## Current State
 
 - Firmware is not the active blocker.
 - The nRF54L15 can join Thread as `child` when commissioned with the documented Method 2 flow from `C:\myfw\dot-kit\README.md`.
 - The device can ping the OTBR Thread-side IPv6, which proves mesh reachability.
-- The bridge cleanup is complete in this tree and versioned as `0.6.5`.
+- The bridge cleanup is complete in this tree and versioned as `0.6.6`.
 
 ## Proven Facts
 
@@ -28,7 +28,8 @@
 - Multicast on `wpan0` is still unreliable in this HAOS environment
 - Supervisor `/addons` enumeration returned `403`
 - The bridge now probes OTBR add-on `info` endpoints directly before trying broader Supervisor enumeration
-- The latest `v0.6.5` OTBR `/node` fallback produced `0` candidates because the payload only contained border-router metadata (`BaId`, `ExtAddress`, `ExtPanId`, `LeaderData`, `NetworkName`, `NumOfRouter`, `Rloc16`, `RlocAddress`, `State`)
+- The latest OTBR `/node` fallback produced `0` candidates because the payload only contained border-router metadata (`BaId`, `ExtAddress`, `ExtPanId`, `LeaderData`, `NetworkName`, `NumOfRouter`, `Rloc16`, `RlocAddress`, `State`)
+- `v0.6.6` adds a device-initiated CoAP `/announce` path so first contact no longer depends on OTBR inventory or multicast discovery
 
 ## What Changed In v0.6.4
 
@@ -50,20 +51,16 @@
 
 ## Current Live-Test Steps
 
-1. Redeploy this exact bridge tree as add-on version `0.6.5`.
-2. Keep the device attached as `child`. Do not vary firmware during this test.
-3. Restart only the bridge add-on.
-4. Watch for one of these log paths:
-   - `Resolved OTBR web base via Supervisor API: ...`
-   - `OTBR web is reachable at ... but /api/devices returned HTTP 404`
-   - `OTBR /node payload ...`
-   - `OTBR /node fallback produced ... candidate(s)`
-   - `OTBR inventory returned ... candidate(s)`
-5. OTBR `/node` is now proven to be a border-router self-description endpoint on this HA OTBR build, not a mesh inventory endpoint.
-6. The next architecture step should not be an older bridge rollback. It should be a new discovery source:
-   - device-initiated announce/register to the bridge, or
-   - a helper with direct OTBR CLI/topology access, or
-   - a separate OTBR deployment with its own radio if we want independent control
+1. Redeploy this exact bridge tree as add-on version `0.6.6`.
+2. Build both firmware variants from the same source tree. The announce path is functional behavior, not debug-only behavior:
+   - debug: announce happens after manual `ot ifconfig up` + `ot thread start`
+   - production: announce happens automatically after attach
+3. Watch for these log paths:
+   - `CoAP announce server listening on /announce ...`
+   - `Received CoAP announce from ...`
+   - `Processing announce from ...`
+   - `Device ... registered with ... resources`
+4. OTBR `/node` remains a secondary diagnostic signal only. First contact should now come from the device itself.
 
 ## Success Target
 

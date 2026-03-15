@@ -21,6 +21,7 @@ from device_registry import DeviceRegistry
 from mqtt_publisher import MQTTPublisher
 from coap_discovery import CoAPDiscovery
 from coap_client import CoAPClient
+from announce_server import CoAPAnnounceServer
 from resource_handlers import ResourceHandlerRegistry, ResourceRecord
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class CoAPBridgeService:
         self.mqtt = None
         self.discovery = None
         self.coap_client = None
+        self.announce_server = None
 
         self.background_tasks = []
         self.resource_tasks = {}
@@ -135,6 +137,13 @@ class CoAPBridgeService:
             logger.info("Initializing CoAP discovery...")
             self.discovery = CoAPDiscovery(self.registry, self.config.coap_config)
             await self.discovery.initialize()
+
+            logger.info("Initializing CoAP announce server...")
+            self.announce_server = CoAPAnnounceServer(
+                self.config.coap_config,
+                self._handle_device_announce,
+            )
+            await self.announce_server.initialize()
 
             await self._republish_all_discovery()
 
@@ -759,6 +768,16 @@ class CoAPBridgeService:
         except Exception as e:
             logger.error(f"Error handling MQTT command: {e}")
 
+    async def _handle_device_announce(self, ipv6_address, device_id, payload):
+        logger.info("Handling announce for %s from %s", device_id or "unknown", ipv6_address)
+
+        try:
+            result = await self.discovery.process_announcement(ipv6_address, eui64=device_id)
+            if result:
+                self.reconcile_requested.add(result.device_id)
+        except Exception as exc:
+            logger.error("Error handling announce from %s: %s", ipv6_address, exc)
+
     async def _cleanup(self):
         logger.info("Cleaning up...")
 
@@ -784,6 +803,9 @@ class CoAPBridgeService:
 
         if self.coap_client:
             await self.coap_client.shutdown()
+
+        if self.announce_server:
+            await self.announce_server.shutdown()
 
         if self.discovery:
             await self.discovery.shutdown()

@@ -153,6 +153,47 @@ def test_interface_candidates_are_probed_before_multicast():
     run(scenario())
 
 
+def test_process_announcement_registers_device_with_announced_eui64():
+    class FakeRegistry:
+        def __init__(self):
+            self.calls = []
+
+        async def register_device(self, ipv6_addr, eui64=None, resources=None):
+            self.calls.append((ipv6_addr, eui64, resources))
+            return {"device_id": eui64 or "thread_dev", "ipv6_addr": ipv6_addr}
+
+    async def scenario():
+        registry = FakeRegistry()
+        discovery = CoAPDiscovery(registry, {})
+        discovery.context = object()
+
+        async def fake_query(ipv6_addr, timeout=65.0):
+            assert ipv6_addr == "fd35:5807:223f:1:235e:586d:bd3b:4921"
+            assert timeout == 65.0
+            return [{"uri_path": "/uptime", "resource_type": "uptime", "observable": False}]
+
+        discovery.query_device_resources = fake_query
+
+        result = await discovery.process_announcement(
+            "fd35:5807:223f:1:235e:586d:bd3b:4921",
+            eui64="6234567890aacdea",
+        )
+
+        assert registry.calls == [
+            (
+                "fd35:5807:223f:1:235e:586d:bd3b:4921",
+                "6234567890aacdea",
+                [{"uri_path": "/uptime", "resource_type": "uptime", "observable": False}],
+            )
+        ]
+        assert result == {
+            "device_id": "6234567890aacdea",
+            "ipv6_addr": "fd35:5807:223f:1:235e:586d:bd3b:4921",
+        }
+
+    run(scenario())
+
+
 def test_otbr_device_payload_extracts_omr_candidates_and_eui64():
     discovery = CoAPDiscovery(None, {"otbr_rest_url": "http://172.30.32.1:8081"})
 
