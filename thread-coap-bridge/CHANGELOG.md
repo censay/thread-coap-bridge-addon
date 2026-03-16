@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Duplicate attach announce bursts are deduped in the runtime path so the bridge does not keep re-running reconcile and MQTT discovery churn for the same live device
+- Observe registration timeout handling now stays resource-local instead of immediately implying that the whole device is offline
+- Reobserve tasks are tracked explicitly so shutdown can cancel them cleanly
+- Documentation now reflects the current tree as "deployed baseline `0.6.8` plus unreleased fixes" instead of pretending the repo and shipped add-on are identical
+
 ## [0.6.8] - 2026-03-15
 
 ### Fixed

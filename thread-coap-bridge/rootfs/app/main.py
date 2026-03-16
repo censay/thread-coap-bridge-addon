@@ -45,6 +45,11 @@ class CoAPBridgeService:
         self.active_entities = {}
         self.reconcile_requested = set()
         self.discovery_strategy = None
+        # dot-kit intentionally sends a short attach announce burst. Deduping
+        # those back-to-back packets keeps the bridge from re-running runtime
+        # reconcile and MQTT discovery churn for the same live device.
+        self.recent_announces = {}
+        self.announce_dedupe_window = 10.0
 
         self.recent_commands = {}
         self.command_suppress_time = 10
@@ -800,8 +805,21 @@ class CoAPBridgeService:
         logger.info("Handling announce for %s from %s", device_id or "unknown", ipv6_address)
 
         try:
+            announce_key = (device_id or ipv6_address, ipv6_address)
+            last_seen = self.recent_announces.get(announce_key)
+            now = time.time()
+            if last_seen is not None and (now - last_seen) < self.announce_dedupe_window:
+                logger.debug(
+                    "Skipping duplicate announce for %s from %s within %.1fs dedupe window",
+                    device_id or "unknown",
+                    ipv6_address,
+                    self.announce_dedupe_window,
+                )
+                return
+
             result = await self.discovery.process_announcement(ipv6_address, eui64=device_id)
             if result:
+                self.recent_announces[announce_key] = now
                 self.reconcile_requested.add(result.device_id)
         except Exception as exc:
             logger.error("Error handling announce from %s: %s", ipv6_address, exc)

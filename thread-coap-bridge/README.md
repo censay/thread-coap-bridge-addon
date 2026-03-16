@@ -1,8 +1,12 @@
-# Thread CoAP Bridge - v0.6.8
+# Thread CoAP Bridge
 
 Home Assistant add-on for bridging Thread-attached CoAP devices into MQTT Discovery and stable `thread/...` topics.
 
 Repository: `https://github.com/censay/thread-coap-bridge-addon`
+
+Deployed add-on baseline: `v0.6.8`
+
+This repository also contains post-`0.6.8` tree fixes that are not yet reflected in the add-on version number. See `CHANGELOG.md` for the current unreleased delta.
 
 ## Current Status
 
@@ -15,6 +19,9 @@ Validated with the current `dot-kit` firmware:
 - MQTT discovery is published for `auth_tier`, `auth_request`, `battery`, `led`, `sw0`, `sw1`, `uptime`, and `voltage`
 - bridge-side `/auth` verification works and `auth_tier` has been observed moving from `1` to `2`
 - observe registration works for `led` and `sw`
+- duplicate attach announce bursts are deduped in the current tree
+- observe registration timeout no longer marks the whole device offline by itself in the current tree
+- tracked reobserve tasks are cleaned up on shutdown in the current tree
 
 Important context:
 
@@ -96,7 +103,7 @@ That makes it useful for reboot detection and liveness, not as a high-frequency 
 
 ### Light entity does not guarantee visible on-board LED feedback
 
-The bridge only knows that the device exposes `/led` and that the firmware accepts light commands. The current `dot-kit` firmware maps `/led` to its configured GPIO LEDs and also pulses alarm output `P1.06` for `led_id == 0`. HA light success does not necessarily imply that the board LED the user expects will visibly change.
+The bridge only knows that the device exposes `/led` and that the firmware accepts light commands. HA light success does not necessarily imply that the board LED the user expects will visibly change. The hardware mapping lives in firmware and devicetree, and the current XIAO expansion-board build no longer claims `D2/P1.06` for the old alarm-pulse path.
 
 ## Sources Of Truth
 
@@ -235,6 +242,7 @@ Home Assistant discovery topics under `homeassistant/...` are for HA entity regi
 Two future directions remain explicitly on the table:
 
 - clean up the remaining OTBR and multicast log noise now that announce-first discovery works
+- consider whether `binary_sensor` button UX should stay stateful or move toward event-style handling
 - eventually fold this bridge behavior into `C:\github\kit-backend\` so MQTT, discovery normalization, and higher-level backend behavior live in one place
 
 `RiDDiX/home-assistant-matter-hub` is still relevant after normalization if the goal becomes exposing these HA entities outward over Matter. It does not replace Thread-child discovery into HA.

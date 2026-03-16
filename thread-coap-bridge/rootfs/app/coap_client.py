@@ -25,6 +25,7 @@ class CoAPClient:
         self.mqtt = mqtt_publisher
         self.context = None
         self.observations = {}
+        self.reobserve_tasks = set()
         self.running = True
         self.device_status_callback = None
 
@@ -32,6 +33,26 @@ class CoAPClient:
 
     def set_status_callback(self, callback):
         self.device_status_callback = callback
+
+    def _track_reobserve_task(self, task):
+        self.reobserve_tasks.add(task)
+        task.add_done_callback(self.reobserve_tasks.discard)
+        return task
+
+    def _cancel_observation(self, obs_key, observation_request=None):
+        entry = self.observations.get(obs_key)
+        if observation_request is None and entry:
+            observation_request = entry.get("request")
+
+        if observation_request is not None:
+            try:
+                observation_request.observation.cancel()
+            except Exception:
+                pass
+
+        current = self.observations.get(obs_key)
+        if current and (observation_request is None or current.get("request") is observation_request):
+            del self.observations[obs_key]
 
     async def initialize(self):
         try:
@@ -142,6 +163,7 @@ class CoAPClient:
 
         while self.running and consecutive_failures < max_reconnect_attempts:
             retry_delay = min(MAX_RETRY_DELAY, 10.0 * max(1, consecutive_failures))
+            observation_request = None
             try:
                 uri = f'coap://[{ipv6_addr}]{uri_path}'
                 request = Message(code=GET, uri=uri, observe=0, mtype=NON)
@@ -186,21 +208,18 @@ class CoAPClient:
                     else:
                         logger.warning(f"Observe registration failed: {initial_response.code}")
                         consecutive_failures += 1
+                        self._cancel_observation(obs_key, observation_request)
                         await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
                         continue
 
                 except asyncio.TimeoutError:
                     logger.warning(f"Observe registration timeout for {device_id}{uri_path}")
                     consecutive_failures += 1
-
-                    if consecutive_failures >= offline_threshold and device_is_online:
-                        logger.warning(f"Device {device_id} marked offline (observe timeout)")
-                        self.mqtt.publish_availability(device_id, available=False)
-                        await self._notify_device_status(device_id, False)
-                        device_is_online = False
-                        if registry:
-                            await registry.mark_device_offline(device_id)
-
+                    # Treat initial observe registration as resource-local
+                    # failure, not proof that the whole device is gone. Polls
+                    # or a later announce may still succeed while this observe
+                    # stream is being re-established.
+                    self._cancel_observation(obs_key, observation_request)
                     await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
                     continue
 
@@ -228,24 +247,18 @@ class CoAPClient:
                 except Exception as obs_error:
                     logger.warning(f"Observation iteration error for {device_id}{uri_path}: {obs_error}")
 
+                self._cancel_observation(obs_key, observation_request)
                 logger.info(f"Observe stream ended for {device_id}{uri_path}, waiting before retry...")
                 await asyncio.sleep(max(30.0, retry_delay))
 
             except asyncio.CancelledError:
+                self._cancel_observation(obs_key, observation_request)
                 logger.info(f"Observation cancelled for {device_id}{uri_path}")
                 break
             except Exception as e:
                 logger.error(f"Observe error for {device_id}{uri_path}: {e}")
                 consecutive_failures += 1
-
-                if consecutive_failures >= offline_threshold and device_is_online:
-                    logger.warning(f"Device {device_id} marked offline (observe error)")
-                    self.mqtt.publish_availability(device_id, available=False)
-                    await self._notify_device_status(device_id, False)
-                    device_is_online = False
-                    if registry:
-                        await registry.mark_device_offline(device_id)
-
+                self._cancel_observation(obs_key, observation_request)
                 await asyncio.sleep(min(MAX_RETRY_DELAY, 10.0 * consecutive_failures))
 
         if obs_key in self.observations:
@@ -274,7 +287,7 @@ class CoAPClient:
 
                 del self.observations[obs_key]
 
-                asyncio.create_task(
+                self._track_reobserve_task(asyncio.create_task(
                     self.observe_resource(
                         obs_info['device_id'],
                         obs_info['ipv6_addr'],
@@ -284,7 +297,7 @@ class CoAPClient:
                         discovery=obs_info.get('discovery'),
                     ),
                     name=f"reobserve_{device_id}_{obs_info['uri_path']}",
-                )
+                ))
                 logger.info(f"Re-started observation for {device_id}{obs_info['uri_path']}")
 
             except Exception as e:
@@ -303,6 +316,15 @@ class CoAPClient:
                 logger.error(f"Error cancelling observation {obs_key}: {e}")
 
         self.observations.clear()
+
+        for task in list(self.reobserve_tasks):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self.reobserve_tasks.clear()
 
         if self.context:
             await self.context.shutdown()

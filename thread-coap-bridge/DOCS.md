@@ -1,4 +1,8 @@
-# Thread CoAP Bridge Docs - v0.6.8
+# Thread CoAP Bridge Docs
+
+Deployed add-on baseline: `v0.6.8`
+
+This document tracks the current maintained tree, including post-`0.6.8` fixes that have not yet been reflected in the add-on version number.
 
 ## Purpose
 
@@ -24,6 +28,8 @@ After registration:
 - polling is used for slow-changing resources such as battery, voltage, and uptime
 - runtime reconcile restarts watchers when the device reappears or its resource set changes
 - auth state is maintained in the bridge and expires back to tier `1` after the configured TTL
+- duplicate attach announces are absorbed instead of retriggering full runtime churn
+- observe registration timeouts are treated as resource-local failures first
 
 ## Fallback Model
 
@@ -99,7 +105,7 @@ Buttons are currently represented as `binary_sensor` entities. Combined with NON
 
 ### LED behavior
 
-The bridge can confirm that `/led` is working as a CoAP resource, but it cannot promise that the user will see a specific on-board LED. That hardware mapping lives in the firmware and devicetree.
+The bridge can confirm that `/led` is working as a CoAP resource, but it cannot promise that the user will see a specific on-board LED. That hardware mapping lives in the firmware and devicetree, and the current XIAO expansion-board firmware no longer claims `D2/P1.06` for the old alarm-pulse path.
 
 ## What Not To Reinvestigate First
 
@@ -120,6 +126,13 @@ If someone picks this project up later, verify in this order:
 3. bridge log shows `Received CoAP announce from ...`
 4. bridge log shows capability reconcile and MQTT discovery publish
 5. HA shows `uptime` and the rest of the expected entities
+
+## Guard Rails
+
+- preserve announce-first as the primary discovery contract
+- keep OTBR/interface/multicast logic as bootstrap or diagnostic support
+- do not mark the whole device offline from a single observe registration timeout when polls or a later announce may still succeed
+- prefer explicit task ownership and cleanup so shutdown does not leave dangling asyncio tasks
 
 ## Matter Hub Reference
 

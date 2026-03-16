@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+from types import SimpleNamespace
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -76,5 +77,26 @@ def test_crashed_resource_tasks_are_requeued_for_reconcile():
 
         assert "thread_dev" in service.reconcile_requested
         assert service.resource_tasks == {}
+
+    run(scenario())
+
+
+def test_duplicate_announce_within_window_is_ignored():
+    async def scenario():
+        service = CoAPBridgeService()
+        seen = []
+
+        class FakeDiscovery:
+            async def process_announcement(self, ipv6_address, eui64=None):
+                seen.append((ipv6_address, eui64))
+                return SimpleNamespace(device_id="thread_dev")
+
+        service.discovery = FakeDiscovery()
+
+        await service._handle_device_announce("fd00::1234", "abcd", {})
+        await service._handle_device_announce("fd00::1234", "abcd", {})
+
+        assert seen == [("fd00::1234", "abcd")]
+        assert service.reconcile_requested == {"thread_dev"}
 
     run(scenario())
